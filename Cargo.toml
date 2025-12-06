@@ -30,6 +30,7 @@ smallvec = { version = "1.13", features = ["union"] }
 rustc-hash = "2.1"
 bitflags = "2.6"
 parking_lot = "0.12"
+target-lexicon = "0.12"
 
 # Testing
 insta = { version = "1.42", features = ["glob"] }

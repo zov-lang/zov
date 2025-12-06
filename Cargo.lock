@@ -156,7 +156,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "smallvec",
- "target-lexicon",
+ "target-lexicon 0.13.3",
  "wasmtime-internal-math",
 ]
 
@@ -205,7 +205,7 @@ dependencies = [
  "cranelift-codegen",
  "log",
  "smallvec",
- "target-lexicon",
+ "target-lexicon 0.13.3",
 ]
 
 [[package]]
@@ -229,7 +229,7 @@ dependencies = [
  "libc",
  "log",
  "region",
- "target-lexicon",
+ "target-lexicon 0.13.3",
  "wasmtime-internal-jit-icache-coherence",
  "windows-sys 0.60.2",
 ]
@@ -253,7 +253,7 @@ checksum = "2417046989d8d6367a55bbab2e406a9195d176f4779be4aa484d645887217d37"
 dependencies = [
  "cranelift-codegen",
  "libc",
- "target-lexicon",
+ "target-lexicon 0.13.3",
 ]
 
 [[package]]
@@ -268,7 +268,7 @@ dependencies = [
  "cranelift-module",
  "log",
  "object",
- "target-lexicon",
+ "target-lexicon 0.13.3",
 ]
 
 [[package]]
@@ -816,6 +816,12 @@ dependencies = [
 
 [[package]]
 name = "target-lexicon"
+version = "0.12.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
+
+[[package]]
+name = "target-lexicon"
 version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df7f62577c25e07834649fc3b39fafdc597c0a3527dc1c60129201ccfcbaa50c"
@@ -1089,6 +1095,7 @@ name = "zir-codegen"
 version = "0.0.0"
 dependencies = [
  "insta",
+ "target-lexicon 0.12.16",
  "zir",
  "zir-codegen-cranelift",
 ]
@@ -1107,7 +1114,7 @@ dependencies = [
  "index_vec",
  "insta",
  "rustc-hash",
- "target-lexicon",
+ "target-lexicon 0.13.3",
  "zir",
  "zir-codegen",
 ]

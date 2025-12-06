@@ -8,11 +8,14 @@
 //! # Example
 //!
 //! ```ignore
-//! use zir_codegen::{CodegenBackend, CodegenConfig, FunctionSignature, TypeDesc};
+//! use zir_codegen::{CodegenBackend, CodegenConfig, FunctionSignature, TypeDesc, Session};
 //! use zir_codegen_cranelift::CraneliftBackend;
 //!
 //! // Create a backend
 //! let mut backend = CraneliftBackend::new(CodegenConfig::default())?;
+//!
+//! // Initialize with session
+//! backend.init(&Session::for_host());
 //!
 //! // Compile a function
 //! let sig = FunctionSignature::new()
@@ -32,11 +35,14 @@ use cranelift_codegen::ir::types;
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::Module;
+use std::collections::HashMap;
+use std::io::Write;
 use zir::mir::Body;
 use zir::ty::{IntWidth, Ty, TyKind};
 use zir_codegen::{
-    CodegenBackend, CodegenConfig, CodegenError, CodegenResult, CodegenResults, FunctionSignature,
-    IrOutput, TypeDesc,
+    CodegenBackend, CodegenConfig, CodegenError, CodegenResult, CodegenResults, CodegenUnit,
+    FunctionSignature, IrOutput, OngoingCodegen, OutputFilenames, Session, TargetConfig, TypeDesc,
+    WorkProduct, WorkProductId,
 };
 
 /// Cranelift-based code generation backend.
@@ -48,6 +54,13 @@ pub struct CraneliftBackend {
     ctx: CodegenContext<JITModule>,
     /// Configuration for this backend.
     config: CodegenConfig,
+}
+
+/// Internal result from codegen_unit for joining later.
+struct CraneliftCodegenResult {
+    /// Compiled IR text for each function.
+    #[allow(dead_code)]
+    ir_outputs: Vec<String>,
 }
 
 impl CraneliftBackend {
@@ -93,6 +106,80 @@ impl CodegenBackend for CraneliftBackend {
         "cranelift"
     }
 
+    fn init(&self, _sess: &Session) {
+        // Cranelift initialization is done in new()
+        // This could be extended to configure optimization levels, etc.
+    }
+
+    fn target_config(&self, _sess: &Session) -> TargetConfig {
+        TargetConfig {
+            pointer_width: self.ctx.ptr_type.bits(),
+            has_reliable_f16: false,
+            has_reliable_f128: false,
+            target_features: Vec::new(),
+            unstable_target_features: Vec::new(),
+        }
+    }
+
+    fn print_passes(&self) {
+        // Cranelift passes are internal, but we could list optimization passes
+    }
+
+    fn print_version(&self) {
+        // Print Cranelift version info
+    }
+
+    fn print(&self, out: &mut dyn Write) -> CodegenResult<()> {
+        writeln!(out, "Cranelift backend")?;
+        writeln!(out, "  pointer type: {}", self.ctx.ptr_type)?;
+        Ok(())
+    }
+
+    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> CodegenResult<OngoingCodegen> {
+        let mut ir_outputs = Vec::new();
+
+        for (body, signature) in &unit.bodies {
+            let clif_sig = self.convert_signature(signature);
+            let clif_text = self
+                .ctx
+                .compile_to_clif(body, clif_sig)
+                .map_err(|e| CodegenError::Module(e.to_string()))?;
+            ir_outputs.push(clif_text);
+        }
+
+        Ok(Box::new(CraneliftCodegenResult { ir_outputs }))
+    }
+
+    fn join_codegen(
+        &self,
+        ongoing: OngoingCodegen,
+        _sess: &Session,
+        _outputs: &OutputFilenames,
+    ) -> CodegenResult<(CodegenResults, HashMap<WorkProductId, WorkProduct>)> {
+        // Downcast the ongoing codegen to our internal type
+        let _result = ongoing
+            .downcast::<CraneliftCodegenResult>()
+            .map_err(|_| CodegenError::Module("invalid ongoing codegen type".to_string()))?;
+
+        // For JIT, we don't produce object files
+        Ok((CodegenResults::default(), HashMap::new()))
+    }
+
+    fn link(
+        &self,
+        _sess: &Session,
+        _results: CodegenResults,
+        _outputs: &OutputFilenames,
+    ) -> CodegenResult<()> {
+        // For JIT compilation, no linking is needed
+        // Object file emission would require cranelift-object
+        Ok(())
+    }
+
+    fn config(&self) -> &CodegenConfig {
+        &self.config
+    }
+
     fn compile_function<'zir>(
         &mut self,
         body: &Body<'zir>,
@@ -125,10 +212,6 @@ impl CodegenBackend for CraneliftBackend {
     fn finalize(self: Box<Self>) -> CodegenResult<CodegenResults> {
         // For JIT, we don't produce object files
         Ok(CodegenResults::default())
-    }
-
-    fn config(&self) -> &CodegenConfig {
-        &self.config
     }
 }
 
