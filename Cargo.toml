@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zir",
+    "crates/zir-codegen",
+    "crates/zov-driver",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zov-lang/zov"
+
+[workspace.dependencies]
+# Arena and indexing
+index_vec = "0.1"
+typed-arena = "2.0"
+
+# Arbitrary precision integers
+num-bigint = "0.4"
+num-traits = "0.2"
+
+# Incremental compilation
+salsa = "0.17"
+
+# Code generation
+cranelift = "0.116"
+cranelift-module = "0.116"
+cranelift-jit = "0.116"
+cranelift-object = "0.116"
+cranelift-native = "0.116"
+cranelift-codegen = "0.116"
+cranelift-frontend = "0.116"
+target-lexicon = "0.13"
+
+# Utilities
+hashbrown = "0.15"
+smallvec = { version = "1.13", features = ["union"] }
+rustc-hash = "2.1"
+bitflags = "2.6"
+parking_lot = "0.12"
+
+# Testing
+insta = { version = "1.42", features = ["glob"] }
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
