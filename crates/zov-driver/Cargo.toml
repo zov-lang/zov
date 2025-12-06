@@ -1,0 +1,22 @@
+[package]
+name = "zov-driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Compiler driver for the ZoV programming language"
+
+[dependencies]
+zir = { path = "../zir" }
+zir-codegen-cranelift = { path = "../zir-codegen-cranelift" }
+
+# Incremental compilation
+salsa = { workspace = true }
+
+# Code generation
+cranelift = "0.126"
+cranelift-jit = "0.126"
+cranelift-module = "0.126"
+cranelift-codegen = "0.126"
+
+[dev-dependencies]
+insta = { workspace = true }

@@ -183,7 +183,7 @@ fn write_operand(f: &mut fmt::Formatter<'_>, operand: &Operand<'_>) -> fmt::Resu
 
 fn write_const_value(f: &mut fmt::Formatter<'_>, value: &ConstValue) -> fmt::Result {
     match value {
-        ConstValue::Scalar(repr) => write!(f, "{}", repr.to_string()),
+        ConstValue::Scalar(repr) => write!(f, "{}", repr),
         ConstValue::Zst => write!(f, "{{zst}}"),
     }
 }

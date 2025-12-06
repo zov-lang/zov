@@ -7,8 +7,9 @@ use cranelift_frontend::{FunctionBuilder, Switch};
 use cranelift_module::{FuncId, Linkage, Module};
 use index_vec::IndexVec;
 use rustc_hash::FxHashMap;
+use zir::idx::Idx;
 use zir::mir::{
-    self, BasicBlock, BinOp, Body, ConstValue, DefId, Local, Operand, Place, Rvalue, START_BLOCK,
+    BasicBlock, BinOp, Body, ConstValue, DefId, Local, Operand, Place, Rvalue, START_BLOCK,
     StatementKind, TerminatorKind, UnOp,
 };
 use zir::ty::{Ty, TyKind};
@@ -108,18 +109,47 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
             self.block_map.push(block);
         }
 
-        // Set up entry block
+        // Set up entry block with parameters
         let entry_block = self.block_map[START_BLOCK];
         self.builder.switch_to_block(entry_block);
-        self.builder.seal_block(entry_block);
+
+        // Add block parameters for function arguments
+        let arg_count = self.body.arg_count;
+        for i in 0..arg_count {
+            let local_idx = i + 1; // Arguments start at local 1
+            if let Some(clif_ty) =
+                clif_type(self.body.local_decls[Local::new(local_idx)].ty, self.ptr_type)
+            {
+                self.builder.append_block_param(entry_block, clif_ty);
+            }
+        }
 
         // Set up locals
         self.setup_locals()?;
 
+        // Store function arguments into their places
+        for i in 0..arg_count {
+            let local_idx = i + 1;
+            let local = Local::new(local_idx);
+            if let Some(_clif_ty) = clif_type(self.body.local_decls[local].ty, self.ptr_type) {
+                let param_val = self.builder.block_params(entry_block)[i];
+                let place = self.locals[local];
+                place.store(
+                    &mut self.builder,
+                    CValue::by_val(param_val, place.ty()),
+                    self.ptr_type,
+                );
+            }
+        }
+
         // Codegen blocks
         for (bb, bb_data) in self.body.basic_blocks.iter_enumerated() {
             let block = self.block_map[bb];
-            self.builder.switch_to_block(block);
+
+            // Only switch if not the entry block (already switched)
+            if bb != START_BLOCK {
+                self.builder.switch_to_block(block);
+            }
 
             for stmt in &bb_data.statements {
                 self.codegen_statement(stmt)?;
@@ -130,10 +160,8 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
             }
         }
 
-        // Seal all blocks
-        for block in self.block_map.iter() {
-            self.builder.seal_block(*block);
-        }
+        // Seal all blocks at the end
+        self.builder.seal_all_blocks();
 
         Ok(())
     }
@@ -367,7 +395,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                     let mut switch = Switch::new();
                     for (val, target) in targets.iter() {
                         let block = self.block_map[target];
-                        switch.set_entry(val as u128, block);
+                        switch.set_entry(val, block);
                     }
                     switch.emit(&mut self.builder, loaded, otherwise);
                 }
