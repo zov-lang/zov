@@ -1,64 +1,126 @@
 //! CLIF codegen tests for zir-codegen-cranelift
 //!
 //! These tests verify that MIR is correctly compiled to Cranelift IR (CLIF).
-//! They use the backend-agnostic testing utilities from `zir_codegen::testing`
-//! to create MIR bodies and compile them using the `CodegenBackend` trait.
+//! The tests use direct `CraneliftBackend` instantiation and a declarative
+//! macro for cleaner test definitions.
 
-use zir::{Arena, mir};
+use zir::Arena;
 use zir_codegen::testing::{
-    compile_to_ir_text, create_add_function, create_const_function, create_max_function,
-    run_standard_tests, sig_i64_i64_to_i64, sig_void_to_i64,
+    create_add_function, create_const_function, create_max_function, run_standard_tests,
+    sig_i64_i64_to_i64, sig_void_to_i64,
 };
-use zir_codegen::{CodegenConfig, FunctionSignature};
-use zir_codegen_cranelift::create_backend;
+use zir_codegen::{CodegenBackend, CodegenConfig};
+use zir_codegen_cranelift::{CraneliftBackend, create_backend};
 
-/// Helper to compile MIR to CLIF using the backend factory.
-fn compile_to_clif(body: &mir::Body<'_>, sig: FunctionSignature) -> String {
-    let mut backend = create_backend(CodegenConfig::default());
-    compile_to_ir_text(backend.as_mut(), body, sig)
+// ============================================================================
+// Declarative Test Macro
+// ============================================================================
+
+/// Macro for declarative codegen test definitions.
+///
+/// This macro simplifies writing codegen tests by reducing boilerplate.
+/// Tests are defined with a name, MIR builder function, and signature.
+///
+/// # Example
+///
+/// ```ignore
+/// clif_test! {
+///     name: test_add,
+///     mir: create_add_function,
+///     sig: sig_i64_i64_to_i64,
+/// }
+/// ```
+macro_rules! clif_test {
+    (
+        name: $name:ident,
+        mir: $mir_fn:expr,
+        sig: $sig_fn:expr $(,)?
+    ) => {
+        #[test]
+        fn $name() {
+            let arena = Arena::new();
+            let body = $mir_fn(&arena);
+            let mut backend = CraneliftBackend::new(CodegenConfig::default());
+            let clif = backend.compile_to_ir(&body, $sig_fn());
+            insta::assert_snapshot!(clif);
+        }
+    };
+    // Variant for const functions with a value parameter
+    (
+        name: $name:ident,
+        mir: $mir_fn:expr,
+        value: $value:expr,
+        sig: $sig_fn:expr $(,)?
+    ) => {
+        #[test]
+        fn $name() {
+            let arena = Arena::new();
+            let body = $mir_fn(&arena, $value);
+            let mut backend = CraneliftBackend::new(CodegenConfig::default());
+            let clif = backend.compile_to_ir(&body, $sig_fn());
+            insta::assert_snapshot!(clif);
+        }
+    };
 }
+
+// ============================================================================
+// CLIF IR Snapshot Tests
+// ============================================================================
+
+clif_test! {
+    name: test_clif_const_42,
+    mir: create_const_function,
+    value: 42,
+    sig: sig_void_to_i64,
+}
+
+clif_test! {
+    name: test_clif_const_negative,
+    mir: create_const_function,
+    value: -123,
+    sig: sig_void_to_i64,
+}
+
+clif_test! {
+    name: test_clif_add_function,
+    mir: create_add_function,
+    sig: sig_i64_i64_to_i64,
+}
+
+clif_test! {
+    name: test_clif_max_function,
+    mir: create_max_function,
+    sig: sig_i64_i64_to_i64,
+}
+
+// ============================================================================
+// Backend Unit Tests (using direct instantiation)
+// ============================================================================
 
 #[test]
 fn test_backend_name() {
-    let backend = create_backend(CodegenConfig::default());
+    let backend = CraneliftBackend::new(CodegenConfig::default());
     assert_eq!(backend.name(), "cranelift");
 }
 
 #[test]
-fn test_clif_const_42() {
-    let arena = Arena::new();
-    let body = create_const_function(&arena, 42);
-    let clif = compile_to_clif(&body, sig_void_to_i64());
-    insta::assert_snapshot!(clif);
+fn test_backend_config() {
+    let config = CodegenConfig { optimize: true, debug_info: true };
+    let backend = CraneliftBackend::new(config);
+    assert!(backend.config().optimize);
+    assert!(backend.config().debug_info);
 }
 
-#[test]
-fn test_clif_const_negative() {
-    let arena = Arena::new();
-    let body = create_const_function(&arena, -123);
-    let clif = compile_to_clif(&body, sig_void_to_i64());
-    insta::assert_snapshot!(clif);
-}
+// ============================================================================
+// Backend Factory Tests (for backend-agnostic compatibility)
+// ============================================================================
 
+/// Test that the factory pattern works for backend-agnostic code.
+/// The factory is kept for cases where code needs to work with any backend.
 #[test]
-fn test_clif_add_function() {
-    let arena = Arena::new();
-    let body = create_add_function(&arena);
-    let clif = compile_to_clif(&body, sig_i64_i64_to_i64());
-    insta::assert_snapshot!(clif);
-}
-
-#[test]
-fn test_clif_max_function() {
-    let arena = Arena::new();
-    let body = create_max_function(&arena);
-    let clif = compile_to_clif(&body, sig_i64_i64_to_i64());
-    insta::assert_snapshot!(clif);
-}
-
-#[test]
-fn test_standard_tests_all_pass() {
+fn test_standard_tests_via_factory() {
     // Run all standard tests using the backend factory
+    // This demonstrates the factory's purpose: backend-agnostic test execution
     let results = run_standard_tests(create_backend);
 
     // Verify we got all expected tests
