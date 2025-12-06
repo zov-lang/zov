@@ -184,7 +184,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 }
             } else {
                 // Need stack slot for address-taken locals
-                let size = self.type_size(decl.ty);
+                let size = Self::type_size(decl.ty);
                 let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
                     StackSlotKind::ExplicitSlot,
                     size,
@@ -199,13 +199,13 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
     }
 
     /// Returns the size of a type in bytes.
-    fn type_size(&self, ty: Ty<'zir>) -> u32 {
+    fn type_size(ty: Ty<'zir>) -> u32 {
         match &*ty {
             TyKind::Bool => 1,
             TyKind::Int(width) | TyKind::Uint(width) => width.bytes(8),
             TyKind::Ptr(..) | TyKind::Ref(..) => 8,
             TyKind::Unit | TyKind::Never => 0,
-            TyKind::Tuple(elems) => elems.iter().map(|t| self.type_size(*t)).sum(),
+            TyKind::Tuple(elems) => elems.iter().map(|t| Self::type_size(*t)).sum(),
             TyKind::FnDef(_) => 0,
         }
     }
