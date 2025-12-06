@@ -16,20 +16,19 @@
 //!
 //! ```ignore
 //! use zir::Arena;
-//! use zir_codegen::testing::{create_const_function, compile_and_verify};
+//! use zir_codegen::testing::{create_const_function, compile_to_ir_text};
 //! use zir_codegen::{FunctionSignature, TypeDesc};
 //!
 //! let arena = Arena::new();
 //! let body = create_const_function(&arena, 42);
 //! let sig = FunctionSignature::new().with_return(TypeDesc::Int(64));
 //!
-//! // Test with any backend factory
-//! compile_and_verify(&backend_factory, &body, sig, |ir| {
-//!     // Verify the generated IR
-//! });
+//! // Test with any backend
+//! let ir = compile_to_ir_text(backend.as_mut(), &body, sig);
+//! // Verify the generated IR
 //! ```
 
-use crate::{CodegenBackend, CodegenConfig, CodegenResult, FunctionSignature, IrOutput, TypeDesc};
+use crate::{CodegenBackend, CodegenConfig, FunctionSignature, IrOutput, TypeDesc};
 use zir::idx::Idx;
 use zir::intern::InternSet;
 use zir::mir::*;
@@ -254,16 +253,20 @@ pub fn sig_i64_i64_to_i64() -> FunctionSignature {
 ///
 /// # Returns
 ///
-/// The textual IR representation on success, or an error.
+/// The textual IR representation.
+///
+/// # Panics
+///
+/// Panics if compilation fails.
 pub fn compile_to_ir_text(
     backend: &mut dyn CodegenBackend,
     body: &Body<'_>,
     sig: FunctionSignature,
-) -> CodegenResult<String> {
-    let ir = backend.compile_to_ir(body, sig)?;
+) -> String {
+    let ir = backend.compile_to_ir(body, sig);
     match ir {
-        IrOutput::Text(text) => Ok(text),
-        IrOutput::Binary(bytes) => Ok(format!("<binary {} bytes>", bytes.len())),
+        IrOutput::Text(text) => text,
+        IrOutput::Binary(bytes) => format!("<binary {} bytes>", bytes.len()),
     }
 }
 
@@ -289,7 +292,11 @@ impl<'a> CodegenTestCase<'a> {
     /// Runs this test case against a backend.
     ///
     /// Returns the generated IR text.
-    pub fn run(&self, backend: &mut dyn CodegenBackend) -> CodegenResult<String> {
+    ///
+    /// # Panics
+    ///
+    /// Panics if compilation fails.
+    pub fn run(&self, backend: &mut dyn CodegenBackend) -> String {
         compile_to_ir_text(backend, &self.body, self.signature.clone())
     }
 }
@@ -329,19 +336,23 @@ pub fn standard_test_cases<'a>(arena: &'a Arena<'a>) -> Vec<CodegenTestCase<'a>>
 /// # Returns
 ///
 /// A vector of tuples containing (test_name, ir_output) for each test case.
-pub fn run_standard_tests<F>(factory: F) -> CodegenResult<Vec<(&'static str, String)>>
+///
+/// # Panics
+///
+/// Panics if backend creation or compilation fails.
+pub fn run_standard_tests<F>(factory: F) -> Vec<(&'static str, String)>
 where
-    F: Fn(CodegenConfig) -> CodegenResult<Box<dyn CodegenBackend>>,
+    F: Fn(CodegenConfig) -> Box<dyn CodegenBackend>,
 {
     let arena = Arena::new();
     let test_cases = standard_test_cases(&arena);
     let mut results = Vec::new();
 
     for test in &test_cases {
-        let mut backend = factory(CodegenConfig::default())?;
-        let ir = test.run(backend.as_mut())?;
+        let mut backend = factory(CodegenConfig::default());
+        let ir = test.run(backend.as_mut());
         results.push((test.name, ir));
     }
 
-    Ok(results)
+    results
 }

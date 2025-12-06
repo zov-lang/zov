@@ -21,62 +21,142 @@
 //! # Example
 //!
 //! ```ignore
-//! use zir_codegen::{CodegenBackend, CodegenConfig, CodegenResult};
+//! use zir_codegen::{CodegenBackend, CodegenConfig, Session, Target};
 //!
-//! let mut backend = SomeCraneliftBackend::new(CodegenConfig::default())?;
+//! let mut backend = SomeCraneliftBackend::new(CodegenConfig::default());
+//! let session = Session::host();
 //! backend.init(&session);
-//! let result = backend.codegen_unit(unit)?;
-//! let (results, _) = backend.join_codegen(ongoing, &session, &outputs)?;
-//! backend.link(&session, results, &outputs)?;
+//! let result = backend.codegen_unit(unit);
+//! let (results, _) = backend.join_codegen(ongoing, &session, &outputs);
+//! backend.link(&session, results, &outputs);
 //! ```
 
 pub mod testing;
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::fmt;
 use std::io::Write;
 use std::path::PathBuf;
 
 use zir::mir::Body;
 
+/// Target specification for code generation.
+///
+/// Inspired by rustc's target specification, this describes the platform
+/// we're compiling for.
+#[derive(Clone, Debug)]
+pub struct Target {
+    /// Pointer width in bits (32 or 64).
+    pub pointer_width: u32,
+    /// Target triple (e.g., "x86_64-unknown-linux-gnu").
+    pub triple: Cow<'static, str>,
+    /// Architecture name (e.g., "x86_64", "aarch64").
+    pub arch: Cow<'static, str>,
+    /// Target-specific options.
+    pub options: TargetOptions,
+}
+
+impl Target {
+    /// Creates a target for the current host.
+    pub fn host() -> Self {
+        let triple = target_lexicon::HOST;
+        Self {
+            pointer_width: std::mem::size_of::<*const ()>() as u32 * 8,
+            triple: Cow::Owned(triple.to_string()),
+            arch: Cow::Owned(triple.architecture.to_string()),
+            options: TargetOptions::default(),
+        }
+    }
+
+    /// Creates a target from a triple string.
+    pub fn from_triple(triple: &str) -> Self {
+        use std::str::FromStr;
+        let parsed = target_lexicon::Triple::from_str(triple).unwrap_or(target_lexicon::HOST);
+        let pointer_width = match parsed.pointer_width() {
+            Ok(pw) => pw.bits() as u32,
+            Err(_) => 64,
+        };
+        Self {
+            pointer_width,
+            triple: Cow::Owned(triple.to_string()),
+            arch: Cow::Owned(parsed.architecture.to_string()),
+            options: TargetOptions::default(),
+        }
+    }
+}
+
+impl Default for Target {
+    fn default() -> Self {
+        Self::host()
+    }
+}
+
+/// Target-specific options.
+#[derive(Clone, Debug, Default)]
+pub struct TargetOptions {
+    /// CPU name for optimization (e.g., "skylake", "apple-m1").
+    pub cpu: Option<Cow<'static, str>>,
+    /// Available target features (e.g., "sse4.2", "avx2").
+    pub features: Vec<Cow<'static, str>>,
+    /// Relocation model.
+    pub relocation_model: RelocModel,
+    /// Whether the target is like Windows.
+    pub is_like_windows: bool,
+    /// Whether the target is like macOS.
+    pub is_like_macos: bool,
+}
+
+/// Relocation model for code generation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RelocModel {
+    /// Static relocation model.
+    Static,
+    /// Position-independent code.
+    #[default]
+    Pic,
+    /// Position-independent executable.
+    Pie,
+    /// Dynamic, non-PIC.
+    DynamicNoPic,
+}
+
 /// Session context for compilation.
 ///
 /// This provides access to compiler options, diagnostics, and other
 /// session-level state needed during code generation.
-#[derive(Clone, Debug, Default)]
+///
+/// Inspired by rustc's Session, this contains target information and
+/// compiler options.
+#[derive(Clone, Debug)]
 pub struct Session {
-    /// Target triple (e.g., "x86_64-unknown-linux-gnu").
-    pub target_triple: String,
-    /// Optimization level (0-3).
-    pub opt_level: u8,
-    /// Whether debug info is enabled.
-    pub debug_info: bool,
-    /// Additional backend-specific options.
-    pub backend_options: HashMap<String, String>,
+    /// The target we're compiling for.
+    pub target: Target,
+    /// The host we're compiling on.
+    pub host: Target,
 }
 
 impl Session {
-    /// Creates a new session with default settings.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Creates a session for the host target.
-    pub fn for_host() -> Self {
-        Self { target_triple: target_lexicon::HOST.to_string(), ..Default::default() }
+    pub fn host() -> Self {
+        let target = Target::host();
+        Self { target: target.clone(), host: target }
     }
 
-    /// Sets the optimization level.
-    pub fn with_opt_level(mut self, level: u8) -> Self {
-        self.opt_level = level;
-        self
+    /// Creates a session with a specific target.
+    pub fn with_target(target: Target) -> Self {
+        Self { target, host: Target::host() }
     }
 
-    /// Enables debug info.
-    pub fn with_debug_info(mut self, enabled: bool) -> Self {
-        self.debug_info = enabled;
-        self
+    /// Creates a session from a target triple string.
+    pub fn from_triple(triple: &str) -> Self {
+        Self { target: Target::from_triple(triple), host: Target::host() }
+    }
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self::host()
     }
 }
 
@@ -89,76 +169,42 @@ pub struct CodegenConfig {
     pub debug_info: bool,
 }
 
-/// Target-specific configuration.
+/// Target-specific configuration returned by backends.
 ///
 /// This structure holds information about the target platform that
 /// backends may need to configure themselves properly.
 #[derive(Clone, Debug, Default)]
 pub struct TargetConfig {
     /// Available target features (e.g., "sse4.2", "avx2").
-    pub target_features: Vec<String>,
+    pub target_features: Vec<Cow<'static, str>>,
     /// Unstable target features that may be enabled.
-    pub unstable_target_features: Vec<String>,
+    pub unstable_target_features: Vec<Cow<'static, str>>,
     /// Whether the target supports reliable f16 operations.
     pub has_reliable_f16: bool,
+    /// Whether the target supports reliable f16 math operations.
+    pub has_reliable_f16_math: bool,
     /// Whether the target supports reliable f128 operations.
     pub has_reliable_f128: bool,
-    /// Pointer width in bits.
-    pub pointer_width: u32,
+    /// Whether the target supports reliable f128 math operations.
+    pub has_reliable_f128_math: bool,
 }
 
 impl TargetConfig {
-    /// Creates a default target config for the current host.
-    pub fn for_host() -> Self {
+    /// Creates a default target config.
+    ///
+    /// Uses `true` as default for float support so backends need to
+    /// explicitly acknowledge when they don't support the float types.
+    pub fn new() -> Self {
         Self {
-            pointer_width: std::mem::size_of::<*const ()>() as u32 * 8,
-            has_reliable_f16: false,
-            has_reliable_f128: false,
-            ..Default::default()
+            target_features: Vec::new(),
+            unstable_target_features: Vec::new(),
+            has_reliable_f16: true,
+            has_reliable_f16_math: true,
+            has_reliable_f128: true,
+            has_reliable_f128_math: true,
         }
     }
 }
-
-/// Errors that can occur during code generation.
-#[derive(Debug)]
-pub enum CodegenError {
-    /// Backend-specific module error.
-    Module(String),
-    /// Unsupported type.
-    UnsupportedType(String),
-    /// Invalid MIR.
-    InvalidMir(String),
-    /// Backend not available.
-    BackendUnavailable(String),
-    /// Linking error.
-    Link(String),
-    /// I/O error.
-    Io(String),
-}
-
-impl fmt::Display for CodegenError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CodegenError::Module(msg) => write!(f, "module error: {}", msg),
-            CodegenError::UnsupportedType(ty) => write!(f, "unsupported type: {}", ty),
-            CodegenError::InvalidMir(msg) => write!(f, "invalid MIR: {}", msg),
-            CodegenError::BackendUnavailable(msg) => write!(f, "backend unavailable: {}", msg),
-            CodegenError::Link(msg) => write!(f, "link error: {}", msg),
-            CodegenError::Io(msg) => write!(f, "I/O error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for CodegenError {}
-
-impl From<std::io::Error> for CodegenError {
-    fn from(err: std::io::Error) -> Self {
-        CodegenError::Io(err.to_string())
-    }
-}
-
-/// Result type for codegen operations.
-pub type CodegenResult<T> = Result<T, CodegenError>;
 
 /// Output file configuration.
 ///
@@ -382,6 +428,13 @@ impl FunctionSignature {
 /// 4. `join_codegen()` - Collect parallel codegen results
 /// 5. `link()` - Link the final output
 ///
+/// # Error Handling
+///
+/// Like rustc's codegen backends, errors during code generation are
+/// typically unrecoverable. Methods either succeed or panic with an
+/// informative error message. This simplifies the API and matches
+/// how real compilers handle internal errors.
+///
 /// # Backend Responsibilities
 ///
 /// Backends implementing this trait should:
@@ -405,12 +458,9 @@ impl FunctionSignature {
 ///         // Initialize backend with session configuration
 ///     }
 ///
-///     fn codegen_unit<'a>(
-///         &mut self,
-///         unit: CodegenUnit<'a>,
-///     ) -> CodegenResult<OngoingCodegen> {
+///     fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> OngoingCodegen {
 ///         // Compile the unit
-///         Ok(Box::new(results))
+///         Box::new(results)
 ///     }
 ///
 ///     fn join_codegen(
@@ -418,19 +468,13 @@ impl FunctionSignature {
 ///         ongoing: OngoingCodegen,
 ///         sess: &Session,
 ///         outputs: &OutputFilenames,
-///     ) -> CodegenResult<(CodegenResults, HashMap<WorkProductId, WorkProduct>)> {
+///     ) -> (CodegenResults, HashMap<WorkProductId, WorkProduct>) {
 ///         // Combine results
-///         Ok((results, work_products))
+///         (results, work_products)
 ///     }
 ///
-///     fn link(
-///         &self,
-///         sess: &Session,
-///         results: CodegenResults,
-///         outputs: &OutputFilenames,
-///     ) -> CodegenResult<()> {
+///     fn link(&self, sess: &Session, results: CodegenResults, outputs: &OutputFilenames) {
 ///         // Link the final output
-///         Ok(())
 ///     }
 /// }
 /// ```
@@ -449,7 +493,7 @@ pub trait CodegenBackend: Any {
     /// This allows backends to report what features they support for
     /// the current target, enabling frontend decisions about code generation.
     fn target_config(&self, _sess: &Session) -> TargetConfig {
-        TargetConfig::for_host()
+        TargetConfig::new()
     }
 
     /// Prints information about available passes.
@@ -465,9 +509,7 @@ pub trait CodegenBackend: Any {
     /// Writes backend-specific information to the given writer.
     ///
     /// This can be used for printing backend-specific debug info.
-    fn print(&self, _out: &mut dyn Write) -> CodegenResult<()> {
-        Ok(())
-    }
+    fn print(&self, _out: &mut dyn Write) {}
 
     /// Compiles a single codegen unit.
     ///
@@ -477,31 +519,38 @@ pub trait CodegenBackend: Any {
     ///
     /// For simple use cases, this can directly return the compiled results.
     /// For parallel compilation, this returns a handle that will be joined later.
-    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> CodegenResult<OngoingCodegen>;
+    ///
+    /// # Panics
+    ///
+    /// Panics if code generation fails.
+    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> OngoingCodegen;
 
     /// Joins ongoing codegen and produces final results.
     ///
     /// This method is called after all codegen units have been compiled.
     /// It combines the results and produces the final `CodegenResults`
     /// along with any work products for incremental compilation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the ongoing codegen type is invalid or joining fails.
     fn join_codegen(
         &self,
         ongoing: OngoingCodegen,
         sess: &Session,
         outputs: &OutputFilenames,
-    ) -> CodegenResult<(CodegenResults, HashMap<WorkProductId, WorkProduct>)>;
+    ) -> (CodegenResults, HashMap<WorkProductId, WorkProduct>);
 
     /// Links the compiled modules into the final output.
     ///
     /// This is the final step in code generation. It takes the compiled
     /// modules from `join_codegen()` and produces the final executable,
     /// library, or object file.
-    fn link(
-        &self,
-        sess: &Session,
-        results: CodegenResults,
-        outputs: &OutputFilenames,
-    ) -> CodegenResult<()>;
+    ///
+    /// # Panics
+    ///
+    /// Panics if linking fails.
+    fn link(&self, sess: &Session, results: CodegenResults, outputs: &OutputFilenames);
 
     /// Returns the configuration for this backend.
     fn config(&self) -> &CodegenConfig;
@@ -512,32 +561,36 @@ pub trait CodegenBackend: Any {
     ///
     /// This is a convenience method for simple use cases where you just
     /// want to compile a single function without the full codegen_unit pipeline.
-    fn compile_function<'zir>(
-        &mut self,
-        body: &Body<'zir>,
-        signature: FunctionSignature,
-    ) -> CodegenResult<()>;
+    ///
+    /// # Panics
+    ///
+    /// Panics if compilation fails.
+    fn compile_function<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature);
 
     /// Compiles a MIR function and returns the IR representation.
     ///
     /// This method is useful for testing the code generation output
     /// without actually executing the generated code. The returned
     /// IR can be compared against expected snapshots.
-    fn compile_to_ir<'zir>(
-        &mut self,
-        body: &Body<'zir>,
-        signature: FunctionSignature,
-    ) -> CodegenResult<IrOutput>;
+    ///
+    /// # Panics
+    ///
+    /// Panics if compilation fails.
+    fn compile_to_ir<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature) -> IrOutput;
 
     /// Finalizes the compilation and returns the results.
     ///
     /// This is a convenience method that combines `join_codegen()` with
     /// default session and output settings.
-    fn finalize(self: Box<Self>) -> CodegenResult<CodegenResults>;
+    ///
+    /// # Panics
+    ///
+    /// Panics if finalization fails.
+    fn finalize(self: Box<Self>) -> CodegenResults;
 }
 
 /// Factory function type for creating backends.
-pub type BackendFactory = fn(CodegenConfig) -> CodegenResult<Box<dyn CodegenBackend>>;
+pub type BackendFactory = fn(CodegenConfig) -> Box<dyn CodegenBackend>;
 
 #[cfg(test)]
 mod tests {
@@ -562,27 +615,6 @@ mod tests {
     }
 
     #[test]
-    fn test_codegen_error_display() {
-        let err = CodegenError::Module("test error".into());
-        assert_eq!(err.to_string(), "module error: test error");
-
-        let err = CodegenError::UnsupportedType("i256".into());
-        assert_eq!(err.to_string(), "unsupported type: i256");
-
-        let err = CodegenError::InvalidMir("bad block".into());
-        assert_eq!(err.to_string(), "invalid MIR: bad block");
-
-        let err = CodegenError::BackendUnavailable("LLVM".into());
-        assert_eq!(err.to_string(), "backend unavailable: LLVM");
-
-        let err = CodegenError::Link("linker failed".into());
-        assert_eq!(err.to_string(), "link error: linker failed");
-
-        let err = CodegenError::Io("file not found".into());
-        assert_eq!(err.to_string(), "I/O error: file not found");
-    }
-
-    #[test]
     fn test_ir_output_equality() {
         let text1 = IrOutput::Text("function f() {}".into());
         let text2 = IrOutput::Text("function f() {}".into());
@@ -593,18 +625,43 @@ mod tests {
     }
 
     #[test]
-    fn test_session_builder() {
-        let session = Session::for_host().with_opt_level(2).with_debug_info(true);
-
-        assert_eq!(session.opt_level, 2);
-        assert!(session.debug_info);
-        assert!(!session.target_triple.is_empty());
+    fn test_target_host() {
+        let target = Target::host();
+        assert!(target.pointer_width == 32 || target.pointer_width == 64);
+        assert!(!target.triple.is_empty());
+        assert!(!target.arch.is_empty());
     }
 
     #[test]
-    fn test_target_config_for_host() {
-        let config = TargetConfig::for_host();
-        assert!(config.pointer_width == 32 || config.pointer_width == 64);
+    fn test_target_from_triple() {
+        let target = Target::from_triple("x86_64-unknown-linux-gnu");
+        assert_eq!(target.pointer_width, 64);
+        assert_eq!(target.triple.as_ref(), "x86_64-unknown-linux-gnu");
+        assert_eq!(target.arch.as_ref(), "x86_64");
+    }
+
+    #[test]
+    fn test_session_host() {
+        let session = Session::host();
+        assert!(session.target.pointer_width == 32 || session.target.pointer_width == 64);
+        assert!(!session.target.triple.is_empty());
+        assert!(!session.host.triple.is_empty());
+    }
+
+    #[test]
+    fn test_session_from_triple() {
+        let session = Session::from_triple("aarch64-unknown-linux-gnu");
+        assert_eq!(session.target.triple.as_ref(), "aarch64-unknown-linux-gnu");
+        // Host should still be the actual host
+        assert!(!session.host.triple.is_empty());
+    }
+
+    #[test]
+    fn test_target_config_new() {
+        let config = TargetConfig::new();
+        // Defaults to true for float support
+        assert!(config.has_reliable_f16);
+        assert!(config.has_reliable_f128);
     }
 
     #[test]
@@ -647,5 +704,11 @@ mod tests {
         let id3 = WorkProductId("module2".to_string());
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_reloc_model_default() {
+        let model = RelocModel::default();
+        assert_eq!(model, RelocModel::Pic);
     }
 }

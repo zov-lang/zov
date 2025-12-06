@@ -12,16 +12,16 @@
 //! use zir_codegen_cranelift::CraneliftBackend;
 //!
 //! // Create a backend
-//! let mut backend = CraneliftBackend::new(CodegenConfig::default())?;
+//! let mut backend = CraneliftBackend::new(CodegenConfig::default());
 //!
 //! // Initialize with session
-//! backend.init(&Session::for_host());
+//! backend.init(&Session::host());
 //!
 //! // Compile a function
 //! let sig = FunctionSignature::new()
 //!     .with_param(TypeDesc::Int(64))
 //!     .with_return(TypeDesc::Int(64));
-//! let ir = backend.compile_to_ir(&body, sig)?;
+//! let ir = backend.compile_to_ir(&body, sig);
 //! ```
 
 mod analyze;
@@ -40,9 +40,8 @@ use std::io::Write;
 use zir::mir::Body;
 use zir::ty::{IntWidth, Ty, TyKind};
 use zir_codegen::{
-    CodegenBackend, CodegenConfig, CodegenError, CodegenResult, CodegenResults, CodegenUnit,
-    FunctionSignature, IrOutput, OngoingCodegen, OutputFilenames, Session, TargetConfig, TypeDesc,
-    WorkProduct, WorkProductId,
+    CodegenBackend, CodegenConfig, CodegenResults, CodegenUnit, FunctionSignature, IrOutput,
+    OngoingCodegen, OutputFilenames, Session, TargetConfig, TypeDesc, WorkProduct, WorkProductId,
 };
 
 /// Cranelift-based code generation backend.
@@ -65,10 +64,14 @@ struct CraneliftCodegenResult {
 
 impl CraneliftBackend {
     /// Creates a new Cranelift backend.
-    pub fn new(config: CodegenConfig) -> CodegenResult<Self> {
-        let module = create_jit_module()?;
+    ///
+    /// # Panics
+    ///
+    /// Panics if the Cranelift JIT module cannot be created for the current target.
+    pub fn new(config: CodegenConfig) -> Self {
+        let module = create_jit_module();
         let ctx = CodegenContext::new(module);
-        Ok(Self { ctx, config })
+        Self { ctx, config }
     }
 
     /// Returns a reference to the underlying codegen context.
@@ -113,9 +116,11 @@ impl CodegenBackend for CraneliftBackend {
 
     fn target_config(&self, _sess: &Session) -> TargetConfig {
         TargetConfig {
-            pointer_width: self.ctx.ptr_type.bits(),
+            // Cranelift doesn't reliably support f16/f128 yet
             has_reliable_f16: false,
+            has_reliable_f16_math: false,
             has_reliable_f128: false,
+            has_reliable_f128_math: false,
             target_features: Vec::new(),
             unstable_target_features: Vec::new(),
         }
@@ -129,25 +134,22 @@ impl CodegenBackend for CraneliftBackend {
         // Print Cranelift version info
     }
 
-    fn print(&self, out: &mut dyn Write) -> CodegenResult<()> {
-        writeln!(out, "Cranelift backend")?;
-        writeln!(out, "  pointer type: {}", self.ctx.ptr_type)?;
-        Ok(())
+    fn print(&self, out: &mut dyn Write) {
+        writeln!(out, "Cranelift backend").unwrap();
+        writeln!(out, "  pointer type: {}", self.ctx.ptr_type).unwrap();
     }
 
-    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> CodegenResult<OngoingCodegen> {
+    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> OngoingCodegen {
         let mut ir_outputs = Vec::new();
 
         for (body, signature) in &unit.bodies {
             let clif_sig = self.convert_signature(signature);
-            let clif_text = self
-                .ctx
-                .compile_to_clif(body, clif_sig)
-                .map_err(|e| CodegenError::Module(e.to_string()))?;
+            let clif_text =
+                self.ctx.compile_to_clif(body, clif_sig).expect("failed to compile to CLIF");
             ir_outputs.push(clif_text);
         }
 
-        Ok(Box::new(CraneliftCodegenResult { ir_outputs }))
+        Box::new(CraneliftCodegenResult { ir_outputs })
     }
 
     fn join_codegen(
@@ -155,63 +157,43 @@ impl CodegenBackend for CraneliftBackend {
         ongoing: OngoingCodegen,
         _sess: &Session,
         _outputs: &OutputFilenames,
-    ) -> CodegenResult<(CodegenResults, HashMap<WorkProductId, WorkProduct>)> {
+    ) -> (CodegenResults, HashMap<WorkProductId, WorkProduct>) {
         // Downcast the ongoing codegen to our internal type
-        let _result = ongoing
-            .downcast::<CraneliftCodegenResult>()
-            .map_err(|_| CodegenError::Module("invalid ongoing codegen type".to_string()))?;
+        let _result =
+            ongoing.downcast::<CraneliftCodegenResult>().expect("invalid ongoing codegen type");
 
         // For JIT, we don't produce object files
-        Ok((CodegenResults::default(), HashMap::new()))
+        (CodegenResults::default(), HashMap::new())
     }
 
-    fn link(
-        &self,
-        _sess: &Session,
-        _results: CodegenResults,
-        _outputs: &OutputFilenames,
-    ) -> CodegenResult<()> {
+    fn link(&self, _sess: &Session, _results: CodegenResults, _outputs: &OutputFilenames) {
         // For JIT compilation, no linking is needed
         // Object file emission would require cranelift-object
-        Ok(())
     }
 
     fn config(&self) -> &CodegenConfig {
         &self.config
     }
 
-    fn compile_function<'zir>(
-        &mut self,
-        body: &Body<'zir>,
-        signature: FunctionSignature,
-    ) -> CodegenResult<()> {
+    fn compile_function<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature) {
         let clif_sig = self.convert_signature(&signature);
         let func_id = self
             .ctx
             .declare_function("_anon", clif_sig.clone())
-            .map_err(|e| CodegenError::Module(e.to_string()))?;
-        self.ctx
-            .define_function(func_id, body, clif_sig)
-            .map_err(|e| CodegenError::Module(e.to_string()))?;
-        Ok(())
+            .expect("failed to declare function");
+        self.ctx.define_function(func_id, body, clif_sig).expect("failed to define function");
     }
 
-    fn compile_to_ir<'zir>(
-        &mut self,
-        body: &Body<'zir>,
-        signature: FunctionSignature,
-    ) -> CodegenResult<IrOutput> {
+    fn compile_to_ir<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature) -> IrOutput {
         let clif_sig = self.convert_signature(&signature);
-        let clif_text = self
-            .ctx
-            .compile_to_clif(body, clif_sig)
-            .map_err(|e| CodegenError::Module(e.to_string()))?;
-        Ok(IrOutput::Text(clif_text))
+        let clif_text =
+            self.ctx.compile_to_clif(body, clif_sig).expect("failed to compile to CLIF");
+        IrOutput::Text(clif_text)
     }
 
-    fn finalize(self: Box<Self>) -> CodegenResult<CodegenResults> {
+    fn finalize(self: Box<Self>) -> CodegenResults {
         // For JIT, we don't produce object files
-        Ok(CodegenResults::default())
+        CodegenResults::default()
     }
 }
 
@@ -232,22 +214,23 @@ fn type_desc_to_clif(ty: &TypeDesc, ptr_type: types::Type) -> Option<types::Type
 }
 
 /// Creates a JIT module for the current target.
-pub fn create_jit_module() -> CodegenResult<JITModule> {
+///
+/// # Panics
+///
+/// Panics if the JIT module cannot be created for the current target.
+pub fn create_jit_module() -> JITModule {
     let mut flag_builder = settings::builder();
     flag_builder.set("use_colocated_libcalls", "false").unwrap();
     flag_builder.set("is_pic", "false").unwrap();
 
-    let isa_builder =
-        cranelift_native::builder().map_err(|e| CodegenError::Module(e.to_string()))?;
+    let isa_builder = cranelift_native::builder().expect("failed to create ISA builder");
 
     let isa = isa_builder
         .finish(settings::Flags::new(flag_builder))
-        .map_err(|e| CodegenError::Module(e.to_string()))?;
+        .expect("failed to finish ISA builder");
 
     let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
-    let module = JITModule::new(builder);
-
-    Ok(module)
+    JITModule::new(builder)
 }
 
 /// Converts a ZIR type to a Cranelift type.
@@ -295,8 +278,12 @@ pub fn pointer_type(isa: &dyn TargetIsa) -> types::Type {
 /// use zir_codegen::{CodegenConfig, testing::run_standard_tests};
 /// use zir_codegen_cranelift::create_backend;
 ///
-/// let results = run_standard_tests(create_backend)?;
+/// let results = run_standard_tests(create_backend);
 /// ```
-pub fn create_backend(config: CodegenConfig) -> CodegenResult<Box<dyn CodegenBackend>> {
-    Ok(Box::new(CraneliftBackend::new(config)?))
+///
+/// # Panics
+///
+/// Panics if the backend cannot be created for the current target.
+pub fn create_backend(config: CodegenConfig) -> Box<dyn CodegenBackend> {
+    Box::new(CraneliftBackend::new(config))
 }
