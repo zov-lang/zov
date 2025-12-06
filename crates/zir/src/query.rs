@@ -1,6 +1,6 @@
-//! Salsa 0.24 incremental compilation database
+//! Incremental compilation database
 //!
-//! This module provides the foundation for incremental compilation using Salsa 0.24.
+//! This module provides the foundation for incremental compilation using Salsa.
 //! It defines the database and query interfaces for the ZIR compiler that enable
 //! efficient recomputation when sources change.
 
