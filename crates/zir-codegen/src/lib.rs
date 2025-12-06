@@ -12,7 +12,11 @@
 //! # Key Traits
 //!
 //! - [`CodegenBackend`]: The main trait for code generation backends
-//! - [`ModuleBuilder`]: Trait for building code generation modules
+//!
+//! # Testing
+//!
+//! The [`testing`] module provides utilities for writing backend-agnostic
+//! tests that can verify any implementation of [`CodegenBackend`].
 //!
 //! # Example
 //!
@@ -22,6 +26,8 @@
 //! let backend = SomeCraneliftBackend::new(CodegenConfig::default())?;
 //! let result = backend.compile_function(body, signature)?;
 //! ```
+
+pub mod testing;
 
 use std::any::Any;
 use std::fmt;

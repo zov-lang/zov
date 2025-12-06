@@ -10,3 +10,4 @@ zir = { path = "../zir" }
 
 [dev-dependencies]
 insta = { workspace = true }
+zir-codegen-cranelift = { path = "../zir-codegen-cranelift" }

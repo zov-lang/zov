@@ -199,3 +199,21 @@ fn int_width_to_clif(width: IntWidth, ptr_type: types::Type) -> Option<types::Ty
 pub fn pointer_type(isa: &dyn TargetIsa) -> types::Type {
     isa.pointer_type()
 }
+
+/// Creates a Cranelift backend as a boxed trait object.
+///
+/// This is the factory function for creating Cranelift backends in a
+/// backend-agnostic way. It returns a `Box<dyn CodegenBackend>` which
+/// can be used with the testing utilities in `zir_codegen::testing`.
+///
+/// # Example
+///
+/// ```ignore
+/// use zir_codegen::{CodegenConfig, testing::run_standard_tests};
+/// use zir_codegen_cranelift::create_backend;
+///
+/// let results = run_standard_tests(create_backend)?;
+/// ```
+pub fn create_backend(config: CodegenConfig) -> CodegenResult<Box<dyn CodegenBackend>> {
+    Ok(Box::new(CraneliftBackend::new(config)?))
+}
