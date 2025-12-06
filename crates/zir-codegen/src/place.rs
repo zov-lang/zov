@@ -77,6 +77,7 @@ impl<'zir> CPlace<'zir> {
     }
 
     /// Returns the address of this place.
+    #[allow(dead_code)]
     pub fn as_ptr(self, _builder: &mut FunctionBuilder<'_>) -> Option<Pointer> {
         match self.inner {
             CPlaceInner::Var(_) => None, // Variables don't have addresses

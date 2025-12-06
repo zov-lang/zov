@@ -82,6 +82,7 @@ impl<'zir> CValue<'zir> {
     }
 
     /// Returns the SSA value if stored by value.
+    #[allow(dead_code)]
     pub fn as_val(&self) -> Option<Value> {
         match self.inner {
             CValueInner::ByVal(val) => Some(val),
