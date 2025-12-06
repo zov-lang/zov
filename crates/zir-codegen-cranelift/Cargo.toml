@@ -7,6 +7,7 @@ description = "Cranelift code generation backend for ZIR"
 
 [dependencies]
 zir = { path = "../zir" }
+zir-codegen = { path = "../zir-codegen" }
 
 # Code generation
 cranelift = "0.126"

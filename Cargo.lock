@@ -1085,6 +1085,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "zir-codegen"
+version = "0.0.0"
+dependencies = [
+ "insta",
+ "zir",
+]
+
+[[package]]
 name = "zir-codegen-cranelift"
 version = "0.0.0"
 dependencies = [
@@ -1100,4 +1108,5 @@ dependencies = [
  "rustc-hash",
  "target-lexicon",
  "zir",
+ "zir-codegen",
 ]

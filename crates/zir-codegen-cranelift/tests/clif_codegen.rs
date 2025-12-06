@@ -1,17 +1,16 @@
 //! CLIF codegen tests for zir-codegen-cranelift
 //!
 //! These tests verify that MIR is correctly compiled to Cranelift IR (CLIF).
-//! We use snapshot testing to compare the generated CLIF output.
+//! We use the backend-agnostic `CodegenBackend` trait and snapshot testing
+//! to compare the generated CLIF output.
 
-use cranelift::prelude::*;
-use cranelift_codegen::ir::types;
-use cranelift_module::Module;
 use zir::idx::Idx;
 use zir::intern::InternSet;
 use zir::mir::*;
 use zir::ty::*;
 use zir::{Arena, IndexVec};
-use zir_codegen_cranelift::{CodegenContext, create_jit_module};
+use zir_codegen::{CodegenBackend, CodegenConfig, FunctionSignature, IrOutput, TypeDesc};
+use zir_codegen_cranelift::CraneliftBackend;
 
 /// Helper to create a simple function that returns a constant.
 fn create_const_function<'a>(arena: &'a Arena<'a>, value: i64) -> Body<'a> {
@@ -160,20 +159,20 @@ fn create_max_function<'a>(arena: &'a Arena<'a>) -> Body<'a> {
     body
 }
 
-/// Compiles a MIR body to CLIF IR and returns the textual representation.
-fn compile_to_clif(
-    body: &Body<'_>,
-    sig: Signature,
-) -> zir_codegen_cranelift::CodegenResult<String> {
-    let module = create_jit_module()?;
-    let mut ctx = CodegenContext::new(module);
-    ctx.compile_to_clif(body, sig)
+/// Compiles a MIR body to CLIF IR using the backend-agnostic trait.
+fn compile_to_clif(body: &Body<'_>, sig: FunctionSignature) -> zir_codegen::CodegenResult<String> {
+    let mut backend = CraneliftBackend::new(CodegenConfig::default())?;
+    let ir = backend.compile_to_ir(body, sig)?;
+    match ir {
+        IrOutput::Text(text) => Ok(text),
+        IrOutput::Binary(_) => panic!("Expected text output"),
+    }
 }
 
 #[test]
-fn test_create_jit_module() {
-    let module = create_jit_module();
-    assert!(module.is_ok());
+fn test_backend_name() {
+    let backend = CraneliftBackend::new(CodegenConfig::default()).unwrap();
+    assert_eq!(backend.name(), "cranelift");
 }
 
 #[test]
@@ -182,9 +181,7 @@ fn test_clif_const_42() {
     let body = create_const_function(&arena, 42);
 
     // Build signature for () -> i64
-    let module = create_jit_module().unwrap();
-    let mut sig = module.make_signature();
-    sig.returns.push(AbiParam::new(types::I64));
+    let sig = FunctionSignature::new().with_return(TypeDesc::Int(64));
 
     let clif = compile_to_clif(&body, sig).unwrap();
     insta::assert_snapshot!(clif);
@@ -196,9 +193,7 @@ fn test_clif_const_negative() {
     let body = create_const_function(&arena, -123);
 
     // Build signature for () -> i64
-    let module = create_jit_module().unwrap();
-    let mut sig = module.make_signature();
-    sig.returns.push(AbiParam::new(types::I64));
+    let sig = FunctionSignature::new().with_return(TypeDesc::Int(64));
 
     let clif = compile_to_clif(&body, sig).unwrap();
     insta::assert_snapshot!(clif);
@@ -210,11 +205,10 @@ fn test_clif_add_function() {
     let body = create_add_function(&arena);
 
     // Create signature: (i64, i64) -> i64
-    let module = create_jit_module().unwrap();
-    let mut sig = module.make_signature();
-    sig.params.push(AbiParam::new(types::I64));
-    sig.params.push(AbiParam::new(types::I64));
-    sig.returns.push(AbiParam::new(types::I64));
+    let sig = FunctionSignature::new()
+        .with_param(TypeDesc::Int(64))
+        .with_param(TypeDesc::Int(64))
+        .with_return(TypeDesc::Int(64));
 
     let clif = compile_to_clif(&body, sig).unwrap();
     insta::assert_snapshot!(clif);
@@ -226,11 +220,10 @@ fn test_clif_max_function() {
     let body = create_max_function(&arena);
 
     // Create signature: (i64, i64) -> i64
-    let module = create_jit_module().unwrap();
-    let mut sig = module.make_signature();
-    sig.params.push(AbiParam::new(types::I64));
-    sig.params.push(AbiParam::new(types::I64));
-    sig.returns.push(AbiParam::new(types::I64));
+    let sig = FunctionSignature::new()
+        .with_param(TypeDesc::Int(64))
+        .with_param(TypeDesc::Int(64))
+        .with_return(TypeDesc::Int(64));
 
     let clif = compile_to_clif(&body, sig).unwrap();
     insta::assert_snapshot!(clif);

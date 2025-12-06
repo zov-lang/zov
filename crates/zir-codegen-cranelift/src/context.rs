@@ -15,9 +15,10 @@ use zir::mir::{
 use zir::ty::{Ty, TyKind};
 
 use crate::analyze::{SsaKind, analyze_ssa};
+use crate::clif_type;
 use crate::place::CPlace;
 use crate::value::{CValue, Pointer};
-use crate::{CodegenError, CodegenResult, clif_type};
+use zir_codegen::{CodegenError, CodegenResult};
 
 /// Global codegen context.
 pub struct CodegenContext<M: Module> {
