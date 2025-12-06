@@ -905,7 +905,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "zir"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "bitflags 2.10.0",
  "index_vec",
@@ -920,8 +920,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "zir-codegen"
-version = "0.1.0"
+name = "zir-codegen-cranelift"
+version = "0.0.0"
 dependencies = [
  "cranelift",
  "cranelift-codegen",
@@ -935,13 +935,4 @@ dependencies = [
  "rustc-hash 2.1.1",
  "target-lexicon",
  "zir",
-]
-
-[[package]]
-name = "zov-driver"
-version = "0.1.0"
-dependencies = [
- "index_vec",
- "zir",
- "zir-codegen",
 ]
