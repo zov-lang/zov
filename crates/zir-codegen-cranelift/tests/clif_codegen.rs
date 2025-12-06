@@ -13,6 +13,28 @@ use zir_codegen::{CodegenBackend, CodegenConfig};
 use zir_codegen_cranelift::{CraneliftBackend, create_backend};
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Normalizes calling conventions in CLIF output for cross-platform snapshot testing.
+///
+/// Different platforms use different calling conventions (e.g., `system_v` on Linux,
+/// `apple_aarch64` on macOS ARM). This function replaces platform-specific calling
+/// conventions with a generic `<call_conv>` placeholder to ensure snapshots are
+/// consistent across all platforms.
+fn normalize_clif(clif: &str) -> String {
+    // List of calling conventions to normalize
+    let calling_conventions =
+        ["system_v", "apple_aarch64", "windows_fastcall", "fast", "cold", "tail", "probestack"];
+
+    let mut result = clif.to_string();
+    for conv in calling_conventions {
+        result = result.replace(conv, "<call_conv>");
+    }
+    result
+}
+
+// ============================================================================
 // Declarative Test Macro
 // ============================================================================
 
@@ -20,6 +42,9 @@ use zir_codegen_cranelift::{CraneliftBackend, create_backend};
 ///
 /// This macro simplifies writing codegen tests by reducing boilerplate.
 /// Tests are defined with a name, MIR builder function, and signature.
+///
+/// The generated CLIF is normalized to remove platform-specific calling
+/// conventions, ensuring consistent snapshots across all platforms.
 ///
 /// # Example
 ///
@@ -42,6 +67,7 @@ macro_rules! clif_test {
             let body = $mir_fn(&arena);
             let mut backend = CraneliftBackend::new(CodegenConfig::default());
             let clif = backend.compile_to_ir(&body, $sig_fn());
+            let clif = normalize_clif(&clif);
             insta::assert_snapshot!(clif);
         }
     };
@@ -58,6 +84,7 @@ macro_rules! clif_test {
             let body = $mir_fn(&arena, $value);
             let mut backend = CraneliftBackend::new(CodegenConfig::default());
             let clif = backend.compile_to_ir(&body, $sig_fn());
+            let clif = normalize_clif(&clif);
             insta::assert_snapshot!(clif);
         }
     };

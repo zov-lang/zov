@@ -1,9 +1,8 @@
 ---
 source: crates/zir-codegen-cranelift/tests/clif_codegen.rs
-assertion_line: 187
 expression: clif
 ---
-function u0:0() -> i64 system_v {
+function u0:0() -> i64 <call_conv> {
 block0:
     v0 = iconst.i64 42
     return v0  ; v0 = 42
