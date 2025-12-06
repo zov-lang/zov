@@ -10,14 +10,15 @@ mod context;
 mod place;
 mod value;
 
+use std::collections::HashMap;
+use std::io::Write;
+
 pub use context::{CodegenContext, FunctionCodegen};
 use cranelift::prelude::*;
 use cranelift_codegen::ir::types;
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::Module;
-use std::collections::HashMap;
-use std::io::Write;
 use zir::mir::Body;
 use zir::ty::{IntWidth, Ty, TyKind};
 use zir_codegen::{
@@ -96,15 +97,15 @@ impl CodegenBackend for CraneliftBackend {
     }
 
     fn target_config(&self, _sess: &Session) -> TargetConfig {
-        // Cranelift doesn't reliably support f16/f128 yet.
-        // Setting these to false prevents tests from being silently skipped.
+        let target_features = vec![];
+        let unstable_target_features = vec![];
         TargetConfig {
+            target_features,
+            unstable_target_features,
             has_reliable_f16: false,
             has_reliable_f16_math: false,
             has_reliable_f128: false,
             has_reliable_f128_math: false,
-            target_features: Vec::new(),
-            unstable_target_features: Vec::new(),
         }
     }
 

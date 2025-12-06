@@ -141,22 +141,6 @@ pub struct TargetConfig {
     pub has_reliable_f128_math: bool,
 }
 
-impl Default for TargetConfig {
-    /// Default uses `true` for float support so backends need to explicitly
-    /// acknowledge when they don't support the float types, rather than
-    /// accidentally quietly skipping all tests.
-    fn default() -> Self {
-        Self {
-            target_features: vec![],
-            unstable_target_features: vec![],
-            has_reliable_f16: true,
-            has_reliable_f16_math: true,
-            has_reliable_f128: true,
-            has_reliable_f128_math: true,
-        }
-    }
-}
-
 /// Output file configuration.
 ///
 /// Specifies where to write the various outputs of compilation.
@@ -382,7 +366,14 @@ pub trait CodegenBackend: Any {
     /// backends must explicitly acknowledge when they don't support these
     /// types, rather than silently skipping tests.
     fn target_config(&self, _sess: &Session) -> TargetConfig {
-        TargetConfig::default()
+        TargetConfig {
+            target_features: vec![],
+            unstable_target_features: vec![],
+            has_reliable_f16: true,
+            has_reliable_f16_math: true,
+            has_reliable_f128: true,
+            has_reliable_f128_math: true,
+        }
     }
 
     /// Prints information about available passes.
@@ -485,16 +476,9 @@ mod tests {
     }
 
     #[test]
-    fn test_target_config_default() {
-        let config = TargetConfig::default();
-        // Defaults to true for float support
-        assert!(config.has_reliable_f16);
-        assert!(config.has_reliable_f128);
-    }
-
-    #[test]
     fn test_output_filenames() {
         use std::path::Path;
+
         let outputs = OutputFilenames::new(PathBuf::from("/tmp"), "myprogram");
         assert_eq!(outputs.path_for(OutputType::Object), Path::new("/tmp/myprogram.o"));
         assert_eq!(outputs.path_for(OutputType::Assembly), Path::new("/tmp/myprogram.s"));
