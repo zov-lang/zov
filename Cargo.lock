@@ -1101,17 +1101,3 @@ dependencies = [
  "target-lexicon",
  "zir",
 ]
-
-[[package]]
-name = "zov-driver"
-version = "0.0.0"
-dependencies = [
- "cranelift",
- "cranelift-codegen",
- "cranelift-jit",
- "cranelift-module",
- "insta",
- "salsa",
- "zir",
- "zir-codegen-cranelift",
-]
