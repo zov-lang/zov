@@ -68,6 +68,31 @@ impl<M: Module> CodegenContext<M> {
         self.ctx.clear();
         Ok(())
     }
+
+    /// Compiles a function to Cranelift IR without defining it in the module.
+    ///
+    /// Returns the CLIF textual representation of the generated Cranelift IR.
+    /// This is useful for testing the codegen output without JIT execution.
+    pub fn compile_to_clif<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: Signature,
+    ) -> CodegenResult<String> {
+        self.ctx.func.signature = signature;
+
+        let mut builder_ctx = FunctionBuilderContext::new();
+        let builder = FunctionBuilder::new(&mut self.ctx.func, &mut builder_ctx);
+
+        let mut fx = FunctionCodegen::new(self.ptr_type, body, builder);
+        fx.codegen()?;
+        fx.builder.finalize();
+
+        // Capture the CLIF IR representation before clearing
+        let clif_output = self.ctx.func.display().to_string();
+
+        self.ctx.clear();
+        Ok(clif_output)
+    }
 }
 
 /// Function-level codegen context.

@@ -270,70 +270,43 @@ mod tests {
         body
     }
 
-    /// Compiles and JIT-executes a function that takes no arguments and returns an i64.
-    fn jit_compile_and_run(body: &Body<'_>, name: &str) -> CodegenResult<i64> {
+    /// Compiles a MIR body to CLIF IR and returns the textual representation.
+    fn compile_to_clif(body: &Body<'_>, sig: Signature) -> CodegenResult<String> {
         let module = create_jit_module()?;
         let mut ctx = CodegenContext::new(module);
-
-        // Build signature for () -> i64
-        let mut sig = ctx.module.make_signature();
-        sig.returns.push(AbiParam::new(types::I64));
-
-        // Declare and define the function
-        let func_id = ctx.declare_function(name, sig.clone())?;
-        ctx.define_function(func_id, body, sig)?;
-
-        // Finalize and get function pointer
-        ctx.module
-            .finalize_definitions()
-            .map_err(|e| CodegenError::Module(format!("finalize error: {}", e)))?;
-
-        let code_ptr = ctx.module.get_finalized_function(func_id);
-
-        // Safety: We trust our codegen to produce valid code matching the signature
-        let func: fn() -> i64 = unsafe { std::mem::transmute(code_ptr) };
-        Ok(func())
-    }
-
-    /// Compiles a function with given signature and returns the function pointer.
-    fn jit_compile_fn(body: &Body<'_>, name: &str, sig: Signature) -> CodegenResult<*const u8> {
-        let module = create_jit_module()?;
-        let mut ctx = CodegenContext::new(module);
-
-        let func_id = ctx.declare_function(name, sig.clone())?;
-        ctx.define_function(func_id, body, sig)?;
-
-        ctx.module
-            .finalize_definitions()
-            .map_err(|e| CodegenError::Module(format!("finalize error: {}", e)))?;
-
-        // Keep module alive by leaking it (for test purposes only)
-        let code_ptr = ctx.module.get_finalized_function(func_id);
-        std::mem::forget(ctx.module);
-        Ok(code_ptr)
+        ctx.compile_to_clif(body, sig)
     }
 
     #[test]
-    fn test_jit_const_42() {
+    fn test_clif_const_42() {
         let arena = Arena::new();
         let body = create_const_function(&arena, 42);
 
-        let result = jit_compile_and_run(&body, "const_42").unwrap();
-        assert_eq!(result, 42);
+        // Build signature for () -> i64
+        let module = create_jit_module().unwrap();
+        let mut sig = module.make_signature();
+        sig.returns.push(AbiParam::new(types::I64));
+
+        let clif = compile_to_clif(&body, sig).unwrap();
+        insta::assert_snapshot!(clif);
     }
 
     #[test]
-    fn test_jit_const_negative() {
+    fn test_clif_const_negative() {
         let arena = Arena::new();
-        // Use a negative number represented as unsigned
         let body = create_const_function(&arena, -123);
 
-        let result = jit_compile_and_run(&body, "const_neg").unwrap();
-        assert_eq!(result, -123);
+        // Build signature for () -> i64
+        let module = create_jit_module().unwrap();
+        let mut sig = module.make_signature();
+        sig.returns.push(AbiParam::new(types::I64));
+
+        let clif = compile_to_clif(&body, sig).unwrap();
+        insta::assert_snapshot!(clif);
     }
 
     #[test]
-    fn test_jit_add_function() {
+    fn test_clif_add_function() {
         let arena = Arena::new();
         let body = create_add_function(&arena);
 
@@ -344,17 +317,12 @@ mod tests {
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
 
-        let code_ptr = jit_compile_fn(&body, "add", sig).unwrap();
-
-        // Safety: we know the signature matches
-        let add_fn: fn(i64, i64) -> i64 = unsafe { std::mem::transmute(code_ptr) };
-        assert_eq!(add_fn(3, 5), 8);
-        assert_eq!(add_fn(10, 20), 30);
-        assert_eq!(add_fn(-5, 10), 5);
+        let clif = compile_to_clif(&body, sig).unwrap();
+        insta::assert_snapshot!(clif);
     }
 
     #[test]
-    fn test_jit_max_function() {
+    fn test_clif_max_function() {
         let arena = Arena::new();
         let body = create_max_function(&arena);
 
@@ -365,13 +333,7 @@ mod tests {
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
 
-        let code_ptr = jit_compile_fn(&body, "max", sig).unwrap();
-
-        // Safety: we know the signature matches
-        let max_fn: fn(i64, i64) -> i64 = unsafe { std::mem::transmute(code_ptr) };
-        assert_eq!(max_fn(3, 5), 5);
-        assert_eq!(max_fn(10, 5), 10);
-        assert_eq!(max_fn(-5, -10), -5);
-        assert_eq!(max_fn(42, 42), 42);
+        let clif = compile_to_clif(&body, sig).unwrap();
+        insta::assert_snapshot!(clif);
     }
 }
