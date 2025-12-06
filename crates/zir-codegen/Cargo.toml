@@ -1,0 +1,14 @@
+[package]
+name = "zir-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Backend-agnostic code generation traits for ZIR"
+
+[dependencies]
+zir = { path = "../zir" }
+target-lexicon = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+zir-codegen-cranelift = { path = "../zir-codegen-cranelift" }

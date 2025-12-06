@@ -112,7 +112,7 @@ impl IntWidth {
             IntWidth::Size => ptr_size * 8,
             IntWidth::Fixed(bits) => bits,
         };
-        (bits + 7) / 8
+        bits.div_ceil(8)
     }
 
     /// Creates a new fixed-width integer type.

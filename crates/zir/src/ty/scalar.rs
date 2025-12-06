@@ -190,7 +190,7 @@ impl ScalarRepr {
     /// Sign-extends to the specified byte size.
     pub fn sign_extend(&self, new_size: u32) -> Self {
         let mut bytes = self.to_bytes_le();
-        let sign_byte = if bytes.last().map_or(false, |&b| b & 0x80 != 0) { 0xFF } else { 0x00 };
+        let sign_byte = if bytes.last().is_some_and(|&b| b & 0x80 != 0) { 0xFF } else { 0x00 };
         bytes.resize(new_size as usize, sign_byte);
         Self::from_bytes_le(&bytes)
     }

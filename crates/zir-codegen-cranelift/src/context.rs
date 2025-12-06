@@ -1,22 +1,26 @@
 //! Codegen context for Cranelift
 
+// Allow large error types from Cranelift - we don't control their size
+#![allow(clippy::result_large_err)]
+
 use cranelift::prelude::*;
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::types;
 use cranelift_frontend::{FunctionBuilder, Switch};
-use cranelift_module::{FuncId, Linkage, Module};
+use cranelift_module::{FuncId, Linkage, Module, ModuleError};
 use index_vec::IndexVec;
 use rustc_hash::FxHashMap;
+use zir::idx::Idx;
 use zir::mir::{
-    self, BasicBlock, BinOp, Body, ConstValue, DefId, Local, Operand, Place, Rvalue, START_BLOCK,
+    BasicBlock, BinOp, Body, ConstValue, DefId, Local, Operand, Place, Rvalue, START_BLOCK,
     StatementKind, TerminatorKind, UnOp,
 };
 use zir::ty::{Ty, TyKind};
 
 use crate::analyze::{SsaKind, analyze_ssa};
+use crate::clif_type;
 use crate::place::CPlace;
 use crate::value::{CValue, Pointer};
-use crate::{CodegenError, CodegenResult, clif_type};
 
 /// Global codegen context.
 pub struct CodegenContext<M: Module> {
@@ -38,34 +42,71 @@ impl<M: Module> CodegenContext<M> {
     }
 
     /// Declares a function.
-    pub fn declare_function(&mut self, name: &str, signature: Signature) -> CodegenResult<FuncId> {
-        self.module
-            .declare_function(name, Linkage::Export, &signature)
-            .map_err(|e| CodegenError::Module(e.to_string()))
+    ///
+    /// # Panics
+    ///
+    /// Panics if the function cannot be declared.
+    pub fn declare_function(
+        &mut self,
+        name: &str,
+        signature: Signature,
+    ) -> Result<FuncId, ModuleError> {
+        self.module.declare_function(name, Linkage::Export, &signature)
     }
 
     /// Defines a function from MIR.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the function cannot be defined or code generation fails.
     pub fn define_function<'zir>(
         &mut self,
         func_id: FuncId,
         body: &Body<'zir>,
         signature: Signature,
-    ) -> CodegenResult<()> {
+    ) -> Result<(), ModuleError> {
         self.ctx.func.signature = signature;
 
         let mut builder_ctx = FunctionBuilderContext::new();
         let builder = FunctionBuilder::new(&mut self.ctx.func, &mut builder_ctx);
 
         let mut fx = FunctionCodegen::new(self.ptr_type, body, builder);
-        fx.codegen()?;
+        fx.codegen();
         fx.builder.finalize();
 
-        self.module
-            .define_function(func_id, &mut self.ctx)
-            .map_err(|e| CodegenError::Module(e.to_string()))?;
+        self.module.define_function(func_id, &mut self.ctx)?;
 
         self.ctx.clear();
         Ok(())
+    }
+
+    /// Compiles a function to Cranelift IR without defining it in the module.
+    ///
+    /// Returns the CLIF textual representation of the generated Cranelift IR.
+    /// This is useful for testing the codegen output without JIT execution.
+    ///
+    /// # Panics
+    ///
+    /// Panics if code generation fails.
+    pub fn compile_to_clif<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: Signature,
+    ) -> Result<String, ModuleError> {
+        self.ctx.func.signature = signature;
+
+        let mut builder_ctx = FunctionBuilderContext::new();
+        let builder = FunctionBuilder::new(&mut self.ctx.func, &mut builder_ctx);
+
+        let mut fx = FunctionCodegen::new(self.ptr_type, body, builder);
+        fx.codegen();
+        fx.builder.finalize();
+
+        // Capture the CLIF IR representation before clearing
+        let clif_output = self.ctx.func.display().to_string();
+
+        self.ctx.clear();
+        Ok(clif_output)
     }
 }
 
@@ -101,45 +142,74 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
     }
 
     /// Generates code for the function.
-    pub fn codegen(&mut self) -> CodegenResult<()> {
+    ///
+    /// # Panics
+    ///
+    /// Panics if code generation fails due to invalid MIR or unsupported features.
+    pub fn codegen(&mut self) {
         // Create blocks
         for _ in self.body.basic_blocks.iter() {
             let block = self.builder.create_block();
             self.block_map.push(block);
         }
 
-        // Set up entry block
+        // Set up entry block with parameters
         let entry_block = self.block_map[START_BLOCK];
         self.builder.switch_to_block(entry_block);
-        self.builder.seal_block(entry_block);
+
+        // Add block parameters for function arguments
+        let arg_count = self.body.arg_count;
+        for i in 0..arg_count {
+            let local_idx = i + 1; // Arguments start at local 1
+            if let Some(clif_ty) =
+                clif_type(self.body.local_decls[Local::new(local_idx)].ty, self.ptr_type)
+            {
+                self.builder.append_block_param(entry_block, clif_ty);
+            }
+        }
 
         // Set up locals
-        self.setup_locals()?;
+        self.setup_locals();
+
+        // Store function arguments into their places
+        for i in 0..arg_count {
+            let local_idx = i + 1;
+            let local = Local::new(local_idx);
+            if let Some(_clif_ty) = clif_type(self.body.local_decls[local].ty, self.ptr_type) {
+                let param_val = self.builder.block_params(entry_block)[i];
+                let place = self.locals[local];
+                place.store(
+                    &mut self.builder,
+                    CValue::by_val(param_val, place.ty()),
+                    self.ptr_type,
+                );
+            }
+        }
 
         // Codegen blocks
         for (bb, bb_data) in self.body.basic_blocks.iter_enumerated() {
             let block = self.block_map[bb];
-            self.builder.switch_to_block(block);
+
+            // Only switch if not the entry block (already switched)
+            if bb != START_BLOCK {
+                self.builder.switch_to_block(block);
+            }
 
             for stmt in &bb_data.statements {
-                self.codegen_statement(stmt)?;
+                self.codegen_statement(stmt);
             }
 
             if let Some(ref terminator) = bb_data.terminator {
-                self.codegen_terminator(terminator)?;
+                self.codegen_terminator(terminator);
             }
         }
 
-        // Seal all blocks
-        for block in self.block_map.iter() {
-            self.builder.seal_block(*block);
-        }
-
-        Ok(())
+        // Seal all blocks at the end
+        self.builder.seal_all_blocks();
     }
 
     /// Sets up local variables.
-    fn setup_locals(&mut self) -> CodegenResult<()> {
+    fn setup_locals(&mut self) {
         for (local, decl) in self.body.local_decls.iter_enumerated() {
             let place = if self.ssa_kinds[local] == SsaKind::MaybeSsa {
                 if let Some(clif_ty) = clif_type(decl.ty, self.ptr_type) {
@@ -156,7 +226,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 }
             } else {
                 // Need stack slot for address-taken locals
-                let size = self.type_size(decl.ty);
+                let size = Self::type_size(decl.ty);
                 let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
                     StackSlotKind::ExplicitSlot,
                     size,
@@ -166,28 +236,26 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
             };
             self.locals.push(place);
         }
-
-        Ok(())
     }
 
     /// Returns the size of a type in bytes.
-    fn type_size(&self, ty: Ty<'zir>) -> u32 {
+    fn type_size(ty: Ty<'zir>) -> u32 {
         match &*ty {
             TyKind::Bool => 1,
             TyKind::Int(width) | TyKind::Uint(width) => width.bytes(8),
             TyKind::Ptr(..) | TyKind::Ref(..) => 8,
             TyKind::Unit | TyKind::Never => 0,
-            TyKind::Tuple(elems) => elems.iter().map(|t| self.type_size(*t)).sum(),
+            TyKind::Tuple(elems) => elems.iter().map(|t| Self::type_size(*t)).sum(),
             TyKind::FnDef(_) => 0,
         }
     }
 
     /// Generates code for a statement.
-    fn codegen_statement(&mut self, stmt: &zir::mir::Statement<'zir>) -> CodegenResult<()> {
+    fn codegen_statement(&mut self, stmt: &zir::mir::Statement<'zir>) {
         match &stmt.kind {
             StatementKind::Assign(place, rvalue) => {
-                let value = self.codegen_rvalue(rvalue)?;
-                let dest = self.codegen_place(place)?;
+                let value = self.codegen_rvalue(rvalue);
+                let dest = self.codegen_place(place);
                 dest.store(&mut self.builder, value, self.ptr_type);
             }
             StatementKind::Nop => {}
@@ -195,40 +263,35 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 // Ignored for now
             }
         }
-        Ok(())
     }
 
     /// Generates code for an rvalue.
-    fn codegen_rvalue(&mut self, rvalue: &Rvalue<'zir>) -> CodegenResult<CValue<'zir>> {
+    fn codegen_rvalue(&mut self, rvalue: &Rvalue<'zir>) -> CValue<'zir> {
         match rvalue {
             Rvalue::Use(operand) => self.codegen_operand(operand),
             Rvalue::BinaryOp(op, lhs, rhs) => {
-                let lhs_val = self.codegen_operand(lhs)?;
-                let rhs_val = self.codegen_operand(rhs)?;
+                let lhs_val = self.codegen_operand(lhs);
+                let rhs_val = self.codegen_operand(rhs);
 
-                let lhs_loaded = lhs_val
-                    .load(&mut self.builder, self.ptr_type)
-                    .ok_or_else(|| CodegenError::InvalidMir("binary op on ZST".into()))?;
-                let rhs_loaded = rhs_val
-                    .load(&mut self.builder, self.ptr_type)
-                    .ok_or_else(|| CodegenError::InvalidMir("binary op on ZST".into()))?;
+                let lhs_loaded =
+                    lhs_val.load(&mut self.builder, self.ptr_type).expect("binary op on ZST");
+                let rhs_loaded =
+                    rhs_val.load(&mut self.builder, self.ptr_type).expect("binary op on ZST");
 
                 let result = self.codegen_binop(*op, lhs_loaded, rhs_loaded);
-                Ok(CValue::by_val(result, lhs_val.ty()))
+                CValue::by_val(result, lhs_val.ty())
             }
             Rvalue::UnaryOp(op, operand) => {
-                let val = self.codegen_operand(operand)?;
-                let loaded = val
-                    .load(&mut self.builder, self.ptr_type)
-                    .ok_or_else(|| CodegenError::InvalidMir("unary op on ZST".into()))?;
+                let val = self.codegen_operand(operand);
+                let loaded = val.load(&mut self.builder, self.ptr_type).expect("unary op on ZST");
 
                 let result = match op {
                     UnOp::Not => self.builder.ins().bnot(loaded),
                     UnOp::Neg => self.builder.ins().ineg(loaded),
                 };
-                Ok(CValue::by_val(result, val.ty()))
+                CValue::by_val(result, val.ty())
             }
-            _ => Err(CodegenError::InvalidMir("unsupported rvalue".into())),
+            _ => panic!("unsupported rvalue"),
         }
     }
 
@@ -255,26 +318,22 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
     }
 
     /// Generates code for an operand.
-    fn codegen_operand(&mut self, operand: &Operand<'zir>) -> CodegenResult<CValue<'zir>> {
+    fn codegen_operand(&mut self, operand: &Operand<'zir>) -> CValue<'zir> {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => {
-                let cplace = self.codegen_place(place)?;
-                Ok(cplace.load(&mut self.builder, self.ptr_type))
+                let cplace = self.codegen_place(place);
+                cplace.load(&mut self.builder, self.ptr_type)
             }
             Operand::Const(const_val, ty) => self.codegen_const(const_val, *ty),
         }
     }
 
     /// Generates code for a constant.
-    fn codegen_const(
-        &mut self,
-        const_val: &ConstValue,
-        ty: Ty<'zir>,
-    ) -> CodegenResult<CValue<'zir>> {
+    fn codegen_const(&mut self, const_val: &ConstValue, ty: Ty<'zir>) -> CValue<'zir> {
         match const_val {
             ConstValue::Scalar(scalar) => {
                 let clif_ty = clif_type(ty, self.ptr_type)
-                    .ok_or_else(|| CodegenError::UnsupportedType(format!("{:?}", ty)))?;
+                    .unwrap_or_else(|| panic!("unsupported type: {:?}", ty));
 
                 let value = match scalar.to_u64() {
                     Some(v) => self.builder.ins().iconst(clif_ty, v as i64),
@@ -286,26 +345,22 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                                 let hi = self.builder.ins().iconst(types::I64, (v >> 64) as i64);
                                 self.builder.ins().iconcat(lo, hi)
                             } else {
-                                return Err(CodegenError::UnsupportedType(
-                                    "scalar too large".into(),
-                                ));
+                                panic!("scalar too large");
                             }
                         } else {
-                            return Err(CodegenError::UnsupportedType(
-                                "arbitrary precision not yet supported in codegen".into(),
-                            ));
+                            panic!("arbitrary precision not yet supported in codegen");
                         }
                     }
                 };
 
-                Ok(CValue::by_val(value, ty))
+                CValue::by_val(value, ty)
             }
-            ConstValue::Zst => Ok(CValue::zst(ty)),
+            ConstValue::Zst => CValue::zst(ty),
         }
     }
 
     /// Generates code for a place.
-    fn codegen_place(&mut self, place: &Place<'zir>) -> CodegenResult<CPlace<'zir>> {
+    fn codegen_place(&mut self, place: &Place<'zir>) -> CPlace<'zir> {
         let mut cplace = self.locals[place.local];
 
         for elem in place.projection.iter() {
@@ -321,16 +376,16 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                     cplace = cplace.field(*idx, cplace.ty(), &mut self.builder);
                 }
                 _ => {
-                    return Err(CodegenError::InvalidMir("unsupported projection element".into()));
+                    panic!("unsupported projection element");
                 }
             }
         }
 
-        Ok(cplace)
+        cplace
     }
 
     /// Generates code for a terminator.
-    fn codegen_terminator(&mut self, terminator: &zir::mir::Terminator<'zir>) -> CodegenResult<()> {
+    fn codegen_terminator(&mut self, terminator: &zir::mir::Terminator<'zir>) {
         match &terminator.kind {
             TerminatorKind::Goto { target } => {
                 let block = self.block_map[*target];
@@ -349,10 +404,8 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 self.builder.ins().trap(TrapCode::user(0).unwrap());
             }
             TerminatorKind::SwitchInt { discr, targets } => {
-                let val = self.codegen_operand(discr)?;
-                let loaded = val
-                    .load(&mut self.builder, self.ptr_type)
-                    .ok_or_else(|| CodegenError::InvalidMir("switch on ZST".into()))?;
+                let val = self.codegen_operand(discr);
+                let loaded = val.load(&mut self.builder, self.ptr_type).expect("switch on ZST");
 
                 let otherwise = self.block_map[targets.otherwise()];
 
@@ -367,16 +420,15 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                     let mut switch = Switch::new();
                     for (val, target) in targets.iter() {
                         let block = self.block_map[target];
-                        switch.set_entry(val as u128, block);
+                        switch.set_entry(val, block);
                     }
                     switch.emit(&mut self.builder, loaded, otherwise);
                 }
             }
             TerminatorKind::Call { func: _, args: _, dest: _, target: _, .. } => {
                 // Simplified call codegen
-                return Err(CodegenError::InvalidMir("function calls not yet implemented".into()));
+                panic!("function calls not yet implemented");
             }
         }
-        Ok(())
     }
 }

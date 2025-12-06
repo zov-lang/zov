@@ -1,7 +1,3 @@
-//! Tests for zir crate
-//!
-//! Tests are organized into modules by component.
-
 use crate::IndexVec;
 use crate::arena::Arena;
 use crate::idx::Idx;
@@ -11,8 +7,6 @@ use crate::mir::*;
 use crate::ty::*;
 
 mod mir_construction {
-    //! Tests for MIR construction and manipulation.
-
     use super::*;
 
     #[test]
@@ -244,8 +238,6 @@ mod mir_construction {
 }
 
 mod type_system {
-    //! Tests for the type system.
-
     use super::*;
 
     #[test]
@@ -294,8 +286,6 @@ mod type_system {
 }
 
 mod scalar_repr {
-    //! Tests for scalar value representation.
-
     use super::*;
 
     #[test]
@@ -328,8 +318,6 @@ mod scalar_repr {
 }
 
 mod control_flow {
-    //! Tests for control flow constructs.
-
     use super::*;
 
     #[test]
@@ -375,8 +363,6 @@ mod control_flow {
 }
 
 mod place_and_projection {
-    //! Tests for places and projections.
-
     use super::*;
 
     #[test]
@@ -400,8 +386,6 @@ mod place_and_projection {
 }
 
 mod arena_allocation {
-    //! Tests for arena allocation.
-
     use super::*;
 
     #[test]
@@ -433,6 +417,70 @@ mod arena_allocation {
 
         assert_eq!(empty1 as *const _, empty2 as *const _);
         assert!(empty1.is_empty());
+    }
+}
+
+mod query_system {
+    use crate::CompilerDatabase;
+    use crate::query::{SourceFile, parse_definitions};
+    use salsa::Setter;
+
+    #[test]
+    fn test_database_creation() {
+        let db = CompilerDatabase::new();
+        let _ = db;
+    }
+
+    #[test]
+    fn test_source_input() {
+        let db = CompilerDatabase::new();
+
+        // Create a source file input
+        let file = SourceFile::new(&db, "fn main() {}".to_string(), "test.zov".to_string());
+
+        // Query source text
+        let text = file.text(&db);
+        assert_eq!(text, "fn main() {}");
+
+        // Query path
+        let path = file.path(&db);
+        assert_eq!(path, "test.zov");
+    }
+
+    #[test]
+    fn test_incremental_update() {
+        let mut db = CompilerDatabase::new();
+
+        // Create initial source
+        let file = SourceFile::new(&db, "fn foo() {}".to_string(), "test.zov".to_string());
+
+        // Query and verify
+        let text1 = file.text(&db);
+        assert_eq!(text1, "fn foo() {}");
+
+        // Update source using setter
+        file.set_text(&mut db).to("fn bar() {}".to_string());
+
+        // Query again - should return updated value
+        let text2 = file.text(&db);
+        assert_eq!(text2, "fn bar() {}");
+    }
+
+    #[test]
+    fn test_parse_definitions() {
+        let db = CompilerDatabase::new();
+
+        // Create a source file
+        let file = SourceFile::new(
+            &db,
+            "fn add(a: i64, b: i64) -> i64 { a + b }".to_string(),
+            "add.zov".to_string(),
+        );
+
+        // Parse definitions returns tracked structs via the tracked function
+        let defs = parse_definitions(&db, file);
+        // Placeholder implementation returns empty list
+        assert!(defs.is_empty());
     }
 }
 

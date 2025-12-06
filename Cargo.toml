@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/zir",
+    "crates/zir-codegen",
     "crates/zir-codegen-cranelift",
 ]
 
@@ -21,7 +22,7 @@ num-bigint = "0.4"
 num-traits = "0.2"
 
 # Incremental compilation
-salsa = "0.17.0-pre.2"
+salsa = "0.24"
 
 # Utilities
 hashbrown = "0.16"
@@ -29,6 +30,7 @@ smallvec = { version = "1.13", features = ["union"] }
 rustc-hash = "2.1"
 bitflags = "2.6"
 parking_lot = "0.12"
+target-lexicon = "0.12"
 
 # Testing
 insta = { version = "1.42", features = ["glob"] }

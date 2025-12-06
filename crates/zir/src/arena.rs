@@ -1,4 +1,11 @@
 //! Arena-based memory allocation for compiler data structures
+//!
+//! This module implements arena allocators using interior mutability patterns.
+//! Arenas intentionally return mutable references from shared references because
+//! they own the allocated memory and use internal cells for bookkeeping.
+
+// Arena allocation requires interior mutability pattern - this is intentional
+#![allow(clippy::mut_from_ref)]
 
 use std::alloc::Layout;
 use std::cell::{Cell, RefCell};
