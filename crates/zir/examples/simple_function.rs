@@ -6,12 +6,12 @@
 //! - Build MIR with basic blocks, statements, and terminators
 //! - Pretty print the MIR
 
+use zir::IndexVec;
 use zir::arena::Arena;
 use zir::idx::Idx;
 use zir::intern::InternSet;
 use zir::mir::*;
 use zir::ty::*;
-use zir::IndexVec;
 
 fn main() {
     println!("ZIR Example: Simple Function");
@@ -76,7 +76,11 @@ fn build_add_function<'zir>(_arena: &'zir Arena, i64_ty: Ty<'zir>) -> Body<'zir>
 }
 
 /// Build MIR for: fn max(a: i64, b: i64) -> i64 { if a > b { a } else { b } }
-fn build_max_function<'zir>(_arena: &'zir Arena, i64_ty: Ty<'zir>, bool_ty: Ty<'zir>) -> Body<'zir> {
+fn build_max_function<'zir>(
+    _arena: &'zir Arena,
+    i64_ty: Ty<'zir>,
+    bool_ty: Ty<'zir>,
+) -> Body<'zir> {
     // Local declarations:
     // _0: return place (i64)
     // _1: arg a (i64)
@@ -154,7 +158,11 @@ fn build_max_function<'zir>(_arena: &'zir Arena, i64_ty: Ty<'zir>, bool_ty: Ty<'
 }
 
 /// Build MIR for: fn count_to_n(n: i64) -> i64 { let mut i = 0; while i < n { i += 1; } i }
-fn build_loop_function<'zir>(_arena: &'zir Arena, i64_ty: Ty<'zir>, bool_ty: Ty<'zir>) -> Body<'zir> {
+fn build_loop_function<'zir>(
+    _arena: &'zir Arena,
+    i64_ty: Ty<'zir>,
+    bool_ty: Ty<'zir>,
+) -> Body<'zir> {
     // Local declarations:
     // _0: return place (i64)
     // _1: arg n (i64)
@@ -174,10 +182,7 @@ fn build_loop_function<'zir>(_arena: &'zir Arena, i64_ty: Ty<'zir>, bool_ty: Ty<
         source_info: SourceInfo { span: Span::DUMMY },
         kind: StatementKind::Assign(
             Place::from_local(Local::new(2)),
-            Rvalue::Use(Operand::Const(
-                ConstValue::Scalar(ScalarRepr::from_u64(0)),
-                i64_ty,
-            )),
+            Rvalue::Use(Operand::Const(ConstValue::Scalar(ScalarRepr::from_u64(0)), i64_ty)),
         ),
     });
     bb0.terminator = Some(Terminator {

@@ -2,13 +2,13 @@
 //!
 //! Tests are organized into modules by component.
 
+use crate::IndexVec;
 use crate::arena::Arena;
 use crate::idx::Idx;
 use crate::intern::InternSet;
 use crate::list::List;
 use crate::mir::*;
 use crate::ty::*;
-use crate::IndexVec;
 
 mod mir_construction {
     //! Tests for MIR construction and manipulation.
@@ -170,10 +170,7 @@ mod mir_construction {
             source_info: SourceInfo { span: Span::DUMMY },
             kind: StatementKind::Assign(
                 Place::from_local(Local::new(2)),
-                Rvalue::Use(Operand::Const(
-                    ConstValue::Scalar(ScalarRepr::from_u64(0)),
-                    i64_ty,
-                )),
+                Rvalue::Use(Operand::Const(ConstValue::Scalar(ScalarRepr::from_u64(0)), i64_ty)),
             ),
         });
         bb0.terminator = Some(Terminator {
@@ -394,10 +391,7 @@ mod place_and_projection {
     fn projected_place() {
         let arena = Arena::new();
         let proj = List::from_arena(&arena, &[PlaceElem::Deref]);
-        let place = Place {
-            local: Local::new(0),
-            projection: proj,
-        };
+        let place = Place { local: Local::new(0), projection: proj };
 
         assert!(!place.is_local());
         assert!(place.as_local().is_none());

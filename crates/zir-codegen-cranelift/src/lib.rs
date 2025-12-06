@@ -8,12 +8,10 @@ mod place;
 mod value;
 
 pub use context::{CodegenContext, FunctionCodegen};
-
 use cranelift::prelude::*;
 use cranelift_codegen::ir::types;
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_jit::{JITBuilder, JITModule};
-
 use zir::ty::{IntWidth, Ty, TyKind};
 
 /// Configuration for code generation.
@@ -27,10 +25,7 @@ pub struct CodegenConfig {
 
 impl Default for CodegenConfig {
     fn default() -> Self {
-        Self {
-            optimize: true,
-            debug_info: false,
-        }
+        Self { optimize: true, debug_info: false }
     }
 }
 
@@ -66,8 +61,8 @@ pub fn create_jit_module() -> CodegenResult<JITModule> {
     flag_builder.set("use_colocated_libcalls", "false").unwrap();
     flag_builder.set("is_pic", "false").unwrap();
 
-    let isa_builder = cranelift_native::builder()
-        .map_err(|e| CodegenError::Module(e.to_string()))?;
+    let isa_builder =
+        cranelift_native::builder().map_err(|e| CodegenError::Module(e.to_string()))?;
 
     let isa = isa_builder
         .finish(settings::Flags::new(flag_builder))

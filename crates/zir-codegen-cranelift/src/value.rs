@@ -24,26 +24,17 @@ enum CValueInner {
 impl<'zir> CValue<'zir> {
     /// Creates a value from a Cranelift SSA value.
     pub fn by_val(value: Value, ty: Ty<'zir>) -> Self {
-        Self {
-            inner: CValueInner::ByVal(value),
-            ty,
-        }
+        Self { inner: CValueInner::ByVal(value), ty }
     }
 
     /// Creates a value from a memory pointer.
     pub fn by_ref(ptr: Pointer, ty: Ty<'zir>) -> Self {
-        Self {
-            inner: CValueInner::ByRef(ptr),
-            ty,
-        }
+        Self { inner: CValueInner::ByRef(ptr), ty }
     }
 
     /// Creates a zero-sized type value.
     pub fn zst(ty: Ty<'zir>) -> Self {
-        Self {
-            inner: CValueInner::Zst,
-            ty,
-        }
+        Self { inner: CValueInner::Zst, ty }
     }
 
     /// Returns the type of this value.
@@ -61,11 +52,7 @@ impl<'zir> CValue<'zir> {
     }
 
     /// Loads the value if stored by reference.
-    pub fn load(
-        self,
-        builder: &mut FunctionBuilder<'_>,
-        ptr_type: types::Type,
-    ) -> Option<Value> {
+    pub fn load(self, builder: &mut FunctionBuilder<'_>, ptr_type: types::Type) -> Option<Value> {
         if self.is_zst() {
             return None;
         }
@@ -109,34 +96,23 @@ enum PointerKind {
 impl Pointer {
     /// Creates a pointer to a stack slot.
     pub fn stack_slot(slot: StackSlot) -> Self {
-        Self {
-            kind: PointerKind::StackSlot(slot),
-            offset: 0,
-        }
+        Self { kind: PointerKind::StackSlot(slot), offset: 0 }
     }
 
     /// Creates a pointer from an address value.
     pub fn addr(value: Value) -> Self {
-        Self {
-            kind: PointerKind::Addr(value),
-            offset: 0,
-        }
+        Self { kind: PointerKind::Addr(value), offset: 0 }
     }
 
     /// Returns the pointer with an added offset.
     pub fn offset(self, offset: i32) -> Self {
-        Self {
-            kind: self.kind,
-            offset: self.offset + offset,
-        }
+        Self { kind: self.kind, offset: self.offset + offset }
     }
 
     /// Gets the address as a Cranelift value.
     pub fn get_addr(self, builder: &mut FunctionBuilder<'_>) -> Value {
         match self.kind {
-            PointerKind::StackSlot(slot) => {
-                builder.ins().stack_addr(types::I64, slot, self.offset)
-            }
+            PointerKind::StackSlot(slot) => builder.ins().stack_addr(types::I64, slot, self.offset),
             PointerKind::Addr(addr) => {
                 if self.offset == 0 {
                     addr

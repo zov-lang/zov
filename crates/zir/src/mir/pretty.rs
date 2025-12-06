@@ -49,11 +49,7 @@ impl<'a, 'zir> Display for PrettyPrinter<'a, 'zir> {
             for i in first_local..body.local_decls.len() {
                 let local = Local::new(i);
                 let decl = &body.local_decls[local];
-                let mutability = if decl.mutability.is_mut() {
-                    "mut "
-                } else {
-                    ""
-                };
+                let mutability = if decl.mutability.is_mut() { "mut " } else { "" };
                 writeln!(f, "    let {}_{}: {:?};", mutability, i, decl.ty)?;
             }
             writeln!(f)?;
@@ -144,11 +140,7 @@ fn write_rvalue(f: &mut fmt::Formatter<'_>, rvalue: &Rvalue<'_>) -> fmt::Result 
             write!(f, " as {:?})", ty)
         }
         Rvalue::AddrOf(mutability, place) => {
-            let prefix = if mutability.is_mut() {
-                "addr_of_mut!"
-            } else {
-                "addr_of!"
-            };
+            let prefix = if mutability.is_mut() { "addr_of_mut!" } else { "addr_of!" };
             write!(f, "{}(", prefix)?;
             write_place(f, place)?;
             write!(f, ")")
@@ -216,13 +208,7 @@ fn write_terminator(f: &mut fmt::Formatter<'_>, term: &Terminator<'_>) -> fmt::R
         }
         TerminatorKind::Return => write!(f, "return;"),
         TerminatorKind::Unreachable => write!(f, "unreachable;"),
-        TerminatorKind::Call {
-            func,
-            args,
-            dest,
-            target,
-            ..
-        } => {
+        TerminatorKind::Call { func, args, dest, target, .. } => {
             write_place(f, dest)?;
             write!(f, " = ")?;
             write_operand(f, func)?;

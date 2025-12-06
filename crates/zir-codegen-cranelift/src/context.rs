@@ -1,23 +1,22 @@
 //! Codegen context for Cranelift
 
 use cranelift::prelude::*;
-use cranelift_codegen::ir::types;
 use cranelift_codegen::Context;
+use cranelift_codegen::ir::types;
 use cranelift_frontend::{FunctionBuilder, Switch};
 use cranelift_module::{FuncId, Linkage, Module};
 use index_vec::IndexVec;
 use rustc_hash::FxHashMap;
-
 use zir::mir::{
-    BasicBlock, BinOp, Body, ConstValue, DefId, Local, Operand, Place, Rvalue,
-    StatementKind, TerminatorKind, UnOp, START_BLOCK,
+    self, BasicBlock, BinOp, Body, ConstValue, DefId, Local, Operand, Place, Rvalue, START_BLOCK,
+    StatementKind, TerminatorKind, UnOp,
 };
 use zir::ty::{Ty, TyKind};
 
-use crate::analyze::{analyze_ssa, SsaKind};
+use crate::analyze::{SsaKind, analyze_ssa};
 use crate::place::CPlace;
 use crate::value::{CValue, Pointer};
-use crate::{clif_type, CodegenError, CodegenResult};
+use crate::{CodegenError, CodegenResult, clif_type};
 
 /// Global codegen context.
 pub struct CodegenContext<M: Module> {
@@ -35,20 +34,11 @@ impl<M: Module> CodegenContext<M> {
     /// Creates a new codegen context.
     pub fn new(module: M) -> Self {
         let ptr_type = module.isa().pointer_type();
-        Self {
-            module,
-            ctx: Context::new(),
-            ptr_type,
-            functions: FxHashMap::default(),
-        }
+        Self { module, ctx: Context::new(), ptr_type, functions: FxHashMap::default() }
     }
 
     /// Declares a function.
-    pub fn declare_function(
-        &mut self,
-        name: &str,
-        signature: Signature,
-    ) -> CodegenResult<FuncId> {
+    pub fn declare_function(&mut self, name: &str, signature: Signature) -> CodegenResult<FuncId> {
         self.module
             .declare_function(name, Linkage::Export, &signature)
             .map_err(|e| CodegenError::Module(e.to_string()))
@@ -93,17 +83,11 @@ pub struct FunctionCodegen<'a, 'zir> {
     locals: IndexVec<Local, CPlace<'zir>>,
     /// SSA analysis results.
     ssa_kinds: IndexVec<Local, SsaKind>,
-    /// Next SSA variable index.
-    next_ssa: u32,
 }
 
 impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
     /// Creates a new function codegen context.
-    pub fn new(
-        ptr_type: types::Type,
-        body: &'a Body<'zir>,
-        builder: FunctionBuilder<'a>,
-    ) -> Self {
+    pub fn new(ptr_type: types::Type, body: &'a Body<'zir>, builder: FunctionBuilder<'a>) -> Self {
         let ssa_kinds = analyze_ssa(body);
 
         Self {
@@ -113,7 +97,6 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
             block_map: IndexVec::new(),
             locals: IndexVec::new(),
             ssa_kinds,
-            next_ssa: 0,
         }
     }
 
@@ -160,9 +143,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
         for (local, decl) in self.body.local_decls.iter_enumerated() {
             let place = if self.ssa_kinds[local] == SsaKind::MaybeSsa {
                 if let Some(clif_ty) = clif_type(decl.ty, self.ptr_type) {
-                    let var = Variable::new(self.next_ssa as usize);
-                    self.next_ssa += 1;
-                    self.builder.declare_var(var, clif_ty);
+                    let var = self.builder.declare_var(clif_ty);
                     CPlace::var(var, decl.ty)
                 } else {
                     // ZST or unsupported type, create dummy
@@ -202,10 +183,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
     }
 
     /// Generates code for a statement.
-    fn codegen_statement(
-        &mut self,
-        stmt: &zir::mir::Statement<'zir>,
-    ) -> CodegenResult<()> {
+    fn codegen_statement(&mut self, stmt: &zir::mir::Statement<'zir>) -> CodegenResult<()> {
         match &stmt.kind {
             StatementKind::Assign(place, rvalue) => {
                 let value = self.codegen_rvalue(rvalue)?;
@@ -343,9 +321,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                     cplace = cplace.field(*idx, cplace.ty(), &mut self.builder);
                 }
                 _ => {
-                    return Err(CodegenError::InvalidMir(
-                        "unsupported projection element".into(),
-                    ));
+                    return Err(CodegenError::InvalidMir("unsupported projection element".into()));
                 }
             }
         }
@@ -354,10 +330,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
     }
 
     /// Generates code for a terminator.
-    fn codegen_terminator(
-        &mut self,
-        terminator: &zir::mir::Terminator<'zir>,
-    ) -> CodegenResult<()> {
+    fn codegen_terminator(&mut self, terminator: &zir::mir::Terminator<'zir>) -> CodegenResult<()> {
         match &terminator.kind {
             TerminatorKind::Goto { target } => {
                 let block = self.block_map[*target];
@@ -386,11 +359,8 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 if targets.values.len() == 1 {
                     // Simple if-else
                     let then_block = self.block_map[targets.targets[0]];
-                    let cmp = self.builder.ins().icmp_imm(
-                        IntCC::Equal,
-                        loaded,
-                        targets.values[0] as i64,
-                    );
+                    let cmp =
+                        self.builder.ins().icmp_imm(IntCC::Equal, loaded, targets.values[0] as i64);
                     self.builder.ins().brif(cmp, then_block, &[], otherwise, &[]);
                 } else {
                     // Full switch - use jump table
@@ -402,17 +372,9 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                     switch.emit(&mut self.builder, loaded, otherwise);
                 }
             }
-            TerminatorKind::Call {
-                func: _,
-                args: _,
-                dest: _,
-                target: _,
-                ..
-            } => {
+            TerminatorKind::Call { func: _, args: _, dest: _, target: _, .. } => {
                 // Simplified call codegen
-                return Err(CodegenError::InvalidMir(
-                    "function calls not yet implemented".into(),
-                ));
+                return Err(CodegenError::InvalidMir("function calls not yet implemented".into()));
             }
         }
         Ok(())

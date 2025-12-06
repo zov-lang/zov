@@ -2,10 +2,10 @@
 
 mod scalar;
 
-pub use scalar::ScalarRepr;
-
 use std::fmt;
 use std::hash::Hash;
+
+pub use scalar::ScalarRepr;
 
 use crate::intern::Interned;
 use crate::list::List;
@@ -190,19 +190,12 @@ impl<'zir> FnSig<'zir> {
     /// Returns the input parameter types.
     pub fn inputs(&self) -> &[Ty<'zir>] {
         let len = self.inputs_and_output.len();
-        if len == 0 {
-            &[]
-        } else {
-            &self.inputs_and_output[..len - 1]
-        }
+        if len == 0 { &[] } else { &self.inputs_and_output[..len - 1] }
     }
 
     /// Returns the output type.
     pub fn output(&self) -> Ty<'zir> {
-        self.inputs_and_output
-            .last()
-            .copied()
-            .expect("signature must have output type")
+        self.inputs_and_output.last().copied().expect("signature must have output type")
     }
 }
 

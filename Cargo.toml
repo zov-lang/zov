@@ -24,7 +24,7 @@ num-traits = "0.2"
 salsa = "0.17.0-pre.2"
 
 # Utilities
-hashbrown = "0.15"
+hashbrown = "0.16"
 smallvec = { version = "1.13", features = ["union"] }
 rustc-hash = "2.1"
 bitflags = "2.6"

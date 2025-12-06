@@ -30,42 +30,27 @@ pub enum ScalarRepr {
 impl ScalarRepr {
     /// Creates a scalar from a u8.
     pub fn from_u8(value: u8) -> Self {
-        ScalarRepr::Inline {
-            data: value as u128,
-            size: 1,
-        }
+        ScalarRepr::Inline { data: value as u128, size: 1 }
     }
 
     /// Creates a scalar from a u16.
     pub fn from_u16(value: u16) -> Self {
-        ScalarRepr::Inline {
-            data: value as u128,
-            size: 2,
-        }
+        ScalarRepr::Inline { data: value as u128, size: 2 }
     }
 
     /// Creates a scalar from a u32.
     pub fn from_u32(value: u32) -> Self {
-        ScalarRepr::Inline {
-            data: value as u128,
-            size: 4,
-        }
+        ScalarRepr::Inline { data: value as u128, size: 4 }
     }
 
     /// Creates a scalar from a u64.
     pub fn from_u64(value: u64) -> Self {
-        ScalarRepr::Inline {
-            data: value as u128,
-            size: 8,
-        }
+        ScalarRepr::Inline { data: value as u128, size: 8 }
     }
 
     /// Creates a scalar from a u128.
     pub fn from_u128(value: u128) -> Self {
-        ScalarRepr::Inline {
-            data: value,
-            size: 16,
-        }
+        ScalarRepr::Inline { data: value, size: 16 }
     }
 
     /// Creates a scalar from bytes (little-endian).
@@ -73,15 +58,9 @@ impl ScalarRepr {
         if bytes.len() <= 16 {
             let mut data = [0u8; 16];
             data[..bytes.len()].copy_from_slice(bytes);
-            ScalarRepr::Inline {
-                data: u128::from_le_bytes(data),
-                size: bytes.len() as u8,
-            }
+            ScalarRepr::Inline { data: u128::from_le_bytes(data), size: bytes.len() as u8 }
         } else {
-            ScalarRepr::Big {
-                value: BigUint::from_bytes_le(bytes),
-                size: bytes.len() as u32,
-            }
+            ScalarRepr::Big { value: BigUint::from_bytes_le(bytes), size: bytes.len() as u32 }
         }
     }
 
@@ -92,10 +71,7 @@ impl ScalarRepr {
             let mut data = [0u8; 16];
             let copy_len = bytes.len().min(16);
             data[..copy_len].copy_from_slice(&bytes[..copy_len]);
-            ScalarRepr::Inline {
-                data: u128::from_le_bytes(data),
-                size: size as u8,
-            }
+            ScalarRepr::Inline { data: u128::from_le_bytes(data), size: size as u8 }
         } else {
             ScalarRepr::Big { value, size }
         }
@@ -104,15 +80,9 @@ impl ScalarRepr {
     /// Creates a zero scalar with the specified byte size.
     pub fn zero(size: u32) -> Self {
         if size <= 16 {
-            ScalarRepr::Inline {
-                data: 0,
-                size: size as u8,
-            }
+            ScalarRepr::Inline { data: 0, size: size as u8 }
         } else {
-            ScalarRepr::Big {
-                value: BigUint::zero(),
-                size,
-            }
+            ScalarRepr::Big { value: BigUint::zero(), size }
         }
     }
 
@@ -220,11 +190,7 @@ impl ScalarRepr {
     /// Sign-extends to the specified byte size.
     pub fn sign_extend(&self, new_size: u32) -> Self {
         let mut bytes = self.to_bytes_le();
-        let sign_byte = if bytes.last().map_or(false, |&b| b & 0x80 != 0) {
-            0xFF
-        } else {
-            0x00
-        };
+        let sign_byte = if bytes.last().map_or(false, |&b| b & 0x80 != 0) { 0xFF } else { 0x00 };
         bytes.resize(new_size as usize, sign_byte);
         Self::from_bytes_le(&bytes)
     }

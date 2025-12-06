@@ -4,11 +4,10 @@ mod pretty;
 mod syntax;
 mod visit;
 
+use index_vec::IndexVec;
 pub use pretty::PrettyPrinter;
 pub use syntax::*;
 pub use visit::{MutVisitor, PlaceContext, Visitor};
-
-use index_vec::IndexVec;
 
 use crate::define_index;
 use crate::idx::Idx;
@@ -49,17 +48,11 @@ pub struct Location {
 
 impl Location {
     /// The start of the function.
-    pub const START: Location = Location {
-        block: START_BLOCK,
-        statement_index: 0,
-    };
+    pub const START: Location = Location { block: START_BLOCK, statement_index: 0 };
 
     /// Returns the next statement location.
     pub fn successor_within_block(&self) -> Location {
-        Location {
-            block: self.block,
-            statement_index: self.statement_index + 1,
-        }
+        Location { block: self.block, statement_index: self.statement_index + 1 }
     }
 }
 
@@ -87,10 +80,7 @@ pub struct Place<'zir> {
 impl<'zir> Place<'zir> {
     /// Creates a place referring to a local with no projection.
     pub fn from_local(local: Local) -> Self {
-        Place {
-            local,
-            projection: List::empty(),
-        }
+        Place { local, projection: List::empty() }
     }
 
     /// Returns true if this place refers to a local with no projection.
@@ -100,11 +90,7 @@ impl<'zir> Place<'zir> {
 
     /// Returns the local if this place is just a local reference.
     pub fn as_local(&self) -> Option<Local> {
-        if self.is_local() {
-            Some(self.local)
-        } else {
-            None
-        }
+        if self.is_local() { Some(self.local) } else { None }
     }
 }
 
@@ -117,10 +103,7 @@ pub struct PlaceRef<'a, 'zir> {
 
 impl<'a, 'zir> From<&'a Place<'zir>> for PlaceRef<'a, 'zir> {
     fn from(place: &'a Place<'zir>) -> Self {
-        PlaceRef {
-            local: place.local,
-            projection: place.projection.as_slice(),
-        }
+        PlaceRef { local: place.local, projection: place.projection.as_slice() }
     }
 }
 
@@ -146,9 +129,7 @@ pub struct BasicBlocks<'zir> {
 impl<'zir> BasicBlocks<'zir> {
     /// Creates empty basic blocks.
     pub fn new() -> Self {
-        Self {
-            blocks: IndexVec::new(),
-        }
+        Self { blocks: IndexVec::new() }
     }
 
     /// Returns an iterator over the basic blocks.
@@ -207,12 +188,7 @@ pub struct Body<'zir> {
 impl<'zir> Body<'zir> {
     /// Creates a new empty body.
     pub fn new(local_decls: LocalDecls<'zir>, arg_count: usize) -> Self {
-        Self {
-            basic_blocks: BasicBlocks::new(),
-            local_decls,
-            arg_count,
-            pass_count: 0,
-        }
+        Self { basic_blocks: BasicBlocks::new(), local_decls, arg_count, pass_count: 0 }
     }
 
     /// Returns the return type of the function.

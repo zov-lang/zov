@@ -3,8 +3,7 @@
 use std::alloc::Layout;
 use std::cell::{Cell, RefCell};
 use std::mem::{self, MaybeUninit};
-use std::ptr;
-use std::slice;
+use std::{ptr, slice};
 
 const PAGE: usize = 4096;
 const HUGE_PAGE: usize = 2 * 1024 * 1024;
@@ -23,9 +22,7 @@ struct ArenaChunk<T> {
 impl<T> ArenaChunk<T> {
     #[inline]
     fn new(capacity: usize) -> Self {
-        Self {
-            storage: Box::new_uninit_slice(capacity),
-        }
+        Self { storage: Box::new_uninit_slice(capacity) }
     }
 
     #[inline]
@@ -234,9 +231,6 @@ pub struct Arena<'zir> {
 
 impl<'zir> Arena<'zir> {
     pub fn new() -> Self {
-        Self {
-            dropless: DroplessArena::new(),
-            _marker: std::marker::PhantomData,
-        }
+        Self { dropless: DroplessArena::new(), _marker: std::marker::PhantomData }
     }
 }

@@ -43,10 +43,7 @@ pub struct BasicBlockData<'zir> {
 impl<'zir> BasicBlockData<'zir> {
     /// Creates a new empty basic block.
     pub fn new() -> Self {
-        Self {
-            statements: Vec::new(),
-            terminator: None,
-        }
+        Self { statements: Vec::new(), terminator: None }
     }
 
     /// Returns the terminator, panicking if not set.
@@ -293,10 +290,7 @@ impl SwitchTargets {
 
     /// Creates a simple if-else switch.
     pub fn if_else(value: u128, then_bb: BasicBlock, else_bb: BasicBlock) -> Self {
-        Self {
-            values: smallvec::smallvec![value],
-            targets: smallvec::smallvec![then_bb, else_bb],
-        }
+        Self { values: smallvec::smallvec![value], targets: smallvec::smallvec![then_bb, else_bb] }
     }
 
     /// Returns the otherwise target.

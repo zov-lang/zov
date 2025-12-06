@@ -1,9 +1,7 @@
 //! SSA analysis for Cranelift codegen
 
 use index_vec::IndexVec;
-use zir::mir::{
-    Body, Local, Location, PlaceContext, Rvalue, Visitor,
-};
+use zir::mir::{Body, Local, Location, PlaceContext, Rvalue, Visitor};
 
 /// SSA kind for a local variable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,13 +14,8 @@ pub enum SsaKind {
 
 /// Analyzes which locals can be represented as SSA variables.
 pub fn analyze_ssa<'zir>(body: &Body<'zir>) -> IndexVec<Local, SsaKind> {
-    let mut analyzer = SsaAnalyzer {
-        kinds: body
-            .local_decls
-            .iter()
-            .map(|_| SsaKind::MaybeSsa)
-            .collect(),
-    };
+    let mut analyzer =
+        SsaAnalyzer { kinds: body.local_decls.iter().map(|_| SsaKind::MaybeSsa).collect() };
 
     analyzer.visit_body(body);
     analyzer.kinds
@@ -54,8 +47,9 @@ impl<'zir> Visitor<'zir> for SsaAnalyzer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use zir::mir::LocalDecls;
+
+    use super::*;
 
     #[test]
     fn test_empty_body() {

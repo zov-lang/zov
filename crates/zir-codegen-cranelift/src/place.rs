@@ -23,18 +23,12 @@ enum CPlaceInner {
 impl<'zir> CPlace<'zir> {
     /// Creates a place from a Cranelift variable.
     pub fn var(var: Variable, ty: Ty<'zir>) -> Self {
-        Self {
-            inner: CPlaceInner::Var(var),
-            ty,
-        }
+        Self { inner: CPlaceInner::Var(var), ty }
     }
 
     /// Creates a place from a memory address.
     pub fn addr(ptr: Pointer, ty: Ty<'zir>) -> Self {
-        Self {
-            inner: CPlaceInner::Addr(ptr),
-            ty,
-        }
+        Self { inner: CPlaceInner::Addr(ptr), ty }
     }
 
     /// Returns the type of this place.
@@ -43,11 +37,7 @@ impl<'zir> CPlace<'zir> {
     }
 
     /// Loads the value from this place.
-    pub fn load(
-        self,
-        builder: &mut FunctionBuilder<'_>,
-        _ptr_type: types::Type,
-    ) -> CValue<'zir> {
+    pub fn load(self, builder: &mut FunctionBuilder<'_>, _ptr_type: types::Type) -> CValue<'zir> {
         match self.inner {
             CPlaceInner::Var(var) => {
                 let val = builder.use_var(var);

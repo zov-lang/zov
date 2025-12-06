@@ -3,10 +3,9 @@
 //! Uses a sharded lock design inspired by rustc_data_structures for better
 //! concurrent performance.
 
-use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
-use std::ptr;
+use std::{fmt, ptr};
 
 use parking_lot::RwLock;
 use rustc_hash::{FxHashSet, FxHasher};
@@ -99,9 +98,7 @@ struct Shard<'a, T: Hash + Eq> {
 
 impl<'a, T: Hash + Eq> Shard<'a, T> {
     fn new() -> Self {
-        Self {
-            lock: RwLock::new(FxHashSet::default()),
-        }
+        Self { lock: RwLock::new(FxHashSet::default()) }
     }
 }
 
@@ -122,9 +119,7 @@ impl<'a, T: Hash + Eq> Default for InternSet<'a, T> {
 
 impl<'a, T: Hash + Eq> InternSet<'a, T> {
     pub fn new() -> Self {
-        Self {
-            shards: Box::new(std::array::from_fn(|_| Shard::new())),
-        }
+        Self { shards: Box::new(std::array::from_fn(|_| Shard::new())) }
     }
 
     /// Intern a value, returning an interned reference.

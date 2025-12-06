@@ -49,18 +49,12 @@ pub trait Visitor<'zir>: Sized {
 
     fn super_basic_block_data(&mut self, bb: BasicBlock, data: &BasicBlockData<'zir>) {
         for (i, stmt) in data.statements.iter().enumerate() {
-            let location = Location {
-                block: bb,
-                statement_index: i,
-            };
+            let location = Location { block: bb, statement_index: i };
             self.visit_statement(stmt, location);
         }
 
         if let Some(ref terminator) = data.terminator {
-            let location = Location {
-                block: bb,
-                statement_index: data.statements.len(),
-            };
+            let location = Location { block: bb, statement_index: data.statements.len() };
             self.visit_terminator(terminator, location);
         }
     }
@@ -85,12 +79,7 @@ pub trait Visitor<'zir>: Sized {
                 self.visit_operand(discr, location);
             }
             TerminatorKind::Return | TerminatorKind::Unreachable => {}
-            TerminatorKind::Call {
-                func,
-                args,
-                dest,
-                ..
-            } => {
+            TerminatorKind::Call { func, args, dest, .. } => {
                 self.visit_operand(func, location);
                 for arg in args {
                     self.visit_operand(arg, location);
@@ -190,19 +179,13 @@ pub trait MutVisitor<'zir>: Sized {
             // Need to borrow mutably, but we can use indices
             let statements_len = data.statements.len();
             for i in 0..statements_len {
-                let location = Location {
-                    block: bb,
-                    statement_index: i,
-                };
+                let location = Location { block: bb, statement_index: i };
                 let stmt = &mut body.basic_blocks[bb].statements[i];
                 self.visit_statement(stmt, location);
             }
 
             if body.basic_blocks[bb].terminator.is_some() {
-                let location = Location {
-                    block: bb,
-                    statement_index: statements_len,
-                };
+                let location = Location { block: bb, statement_index: statements_len };
                 let terminator = body.basic_blocks[bb].terminator.as_mut().unwrap();
                 self.visit_terminator(terminator, location);
             }
@@ -211,18 +194,12 @@ pub trait MutVisitor<'zir>: Sized {
 
     fn super_basic_block_data(&mut self, bb: BasicBlock, data: &mut BasicBlockData<'zir>) {
         for (i, stmt) in data.statements.iter_mut().enumerate() {
-            let location = Location {
-                block: bb,
-                statement_index: i,
-            };
+            let location = Location { block: bb, statement_index: i };
             self.visit_statement(stmt, location);
         }
 
         if let Some(ref mut terminator) = data.terminator {
-            let location = Location {
-                block: bb,
-                statement_index: data.statements.len(),
-            };
+            let location = Location { block: bb, statement_index: data.statements.len() };
             self.visit_terminator(terminator, location);
         }
     }
@@ -247,12 +224,7 @@ pub trait MutVisitor<'zir>: Sized {
                 self.visit_operand(discr, location);
             }
             TerminatorKind::Return | TerminatorKind::Unreachable => {}
-            TerminatorKind::Call {
-                func,
-                args,
-                dest,
-                ..
-            } => {
+            TerminatorKind::Call { func, args, dest, .. } => {
                 self.visit_operand(func, location);
                 for arg in args {
                     self.visit_operand(arg, location);

@@ -44,10 +44,7 @@ pub trait MirDatabase: TypeDatabase {
 
 fn mir_body(_db: &dyn MirDatabase, _def_id: DefId) -> Arc<MirResult> {
     // Placeholder implementation
-    Arc::new(MirResult {
-        body: None,
-        errors: vec![],
-    })
+    Arc::new(MirResult { body: None, errors: vec![] })
 }
 
 fn definitions(_db: &dyn MirDatabase, _file_id: SourceFileId) -> Arc<Vec<DefId>> {

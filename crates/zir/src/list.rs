@@ -1,11 +1,9 @@
 //! Arena-allocated immutable lists
 
 use std::alloc::Layout;
-use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
-use std::ptr;
-use std::slice;
+use std::{fmt, ptr, slice};
 
 use crate::arena::{Arena, DroplessArena};
 
@@ -78,9 +76,8 @@ impl<T: Copy> List<T> {
             return List::empty();
         }
 
-        let (layout, _offset) = Layout::new::<usize>()
-            .extend(Layout::for_value::<[T]>(slice))
-            .unwrap();
+        let (layout, _offset) =
+            Layout::new::<usize>().extend(Layout::for_value::<[T]>(slice)).unwrap();
 
         let mem = arena.alloc_raw(layout) as *mut List<T>;
 
