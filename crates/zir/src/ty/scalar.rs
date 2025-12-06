@@ -243,6 +243,15 @@ impl fmt::Debug for ScalarRepr {
     }
 }
 
+impl fmt::Display for ScalarRepr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ScalarRepr::Inline { data, .. } => write!(f, "{}", data),
+            ScalarRepr::Big { value, .. } => write!(f, "{}", value),
+        }
+    }
+}
+
 impl Default for ScalarRepr {
     fn default() -> Self {
         ScalarRepr::zero(8)

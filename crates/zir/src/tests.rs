@@ -2,9 +2,11 @@
 
 use crate::arena::Arena;
 use crate::idx::Idx;
+use crate::intern::InternSet;
 use crate::list::List;
 use crate::mir::*;
 use crate::ty::*;
+use crate::IndexVec;
 
 #[test]
 fn test_arena_allocation() {
@@ -93,4 +95,174 @@ fn test_binop_is_comparison() {
 
     assert!(!BinOp::Add.is_comparison());
     assert!(!BinOp::Mul.is_comparison());
+}
+
+// Snapshot tests for MIR pretty printing
+mod snapshot_tests {
+    use super::*;
+
+    /// Helper to create a simple add function: fn add(a: i64, b: i64) -> i64 { a + b }
+    fn create_add_function<'zir>(
+        arena: &'zir Arena,
+        types: &InternSet<'zir, TyKind<'zir>>,
+    ) -> Body<'zir> {
+        let i64_ty = types.intern(TyKind::Int(IntWidth::I64), |kind| arena.dropless.alloc(kind));
+
+        // Local declarations: _0: return, _1: arg a, _2: arg b
+        let mut local_decls = IndexVec::new();
+        local_decls.push(LocalDecl {
+            mutability: Mutability::Mut,
+            ty: i64_ty,
+        });
+        local_decls.push(LocalDecl {
+            mutability: Mutability::Not,
+            ty: i64_ty,
+        });
+        local_decls.push(LocalDecl {
+            mutability: Mutability::Not,
+            ty: i64_ty,
+        });
+
+        let mut body = Body::new(local_decls, 2);
+
+        // bb0: _0 = Add(_1, _2); return
+        let mut bb0 = BasicBlockData::new();
+        bb0.statements.push(Statement {
+            source_info: SourceInfo { span: Span::DUMMY },
+            kind: StatementKind::Assign(
+                Place::from_local(Local::new(0)),
+                Rvalue::BinaryOp(
+                    BinOp::Add,
+                    Operand::Copy(Place::from_local(Local::new(1))),
+                    Operand::Copy(Place::from_local(Local::new(2))),
+                ),
+            ),
+        });
+        bb0.terminator = Some(Terminator {
+            source_info: SourceInfo { span: Span::DUMMY },
+            kind: TerminatorKind::Return,
+        });
+
+        body.basic_blocks.push(bb0);
+        body
+    }
+
+    /// Helper to create a conditional function with if-else
+    fn create_conditional_function<'zir>(
+        arena: &'zir Arena,
+        types: &InternSet<'zir, TyKind<'zir>>,
+    ) -> Body<'zir> {
+        let i64_ty = types.intern(TyKind::Int(IntWidth::I64), |kind| arena.dropless.alloc(kind));
+        let bool_ty = types.intern(TyKind::Bool, |kind| arena.dropless.alloc(kind));
+
+        // fn max(a: i64, b: i64) -> i64
+        let mut local_decls = IndexVec::new();
+        local_decls.push(LocalDecl {
+            mutability: Mutability::Mut,
+            ty: i64_ty,
+        }); // _0: return
+        local_decls.push(LocalDecl {
+            mutability: Mutability::Not,
+            ty: i64_ty,
+        }); // _1: arg a
+        local_decls.push(LocalDecl {
+            mutability: Mutability::Not,
+            ty: i64_ty,
+        }); // _2: arg b
+        local_decls.push(LocalDecl {
+            mutability: Mutability::Mut,
+            ty: bool_ty,
+        }); // _3: comparison result
+
+        let mut body = Body::new(local_decls, 2);
+
+        // bb0: _3 = Gt(_1, _2); switchInt(_3) -> [0: bb2, otherwise: bb1]
+        let mut bb0 = BasicBlockData::new();
+        bb0.statements.push(Statement {
+            source_info: SourceInfo { span: Span::DUMMY },
+            kind: StatementKind::Assign(
+                Place::from_local(Local::new(3)),
+                Rvalue::BinaryOp(
+                    BinOp::Gt,
+                    Operand::Copy(Place::from_local(Local::new(1))),
+                    Operand::Copy(Place::from_local(Local::new(2))),
+                ),
+            ),
+        });
+        bb0.terminator = Some(Terminator {
+            source_info: SourceInfo { span: Span::DUMMY },
+            kind: TerminatorKind::SwitchInt {
+                discr: Operand::Copy(Place::from_local(Local::new(3))),
+                targets: SwitchTargets::if_else(0, BasicBlock::new(2), BasicBlock::new(1)),
+            },
+        });
+        body.basic_blocks.push(bb0);
+
+        // bb1: _0 = copy _1; goto -> bb3
+        let mut bb1 = BasicBlockData::new();
+        bb1.statements.push(Statement {
+            source_info: SourceInfo { span: Span::DUMMY },
+            kind: StatementKind::Assign(
+                Place::from_local(Local::new(0)),
+                Rvalue::Use(Operand::Copy(Place::from_local(Local::new(1)))),
+            ),
+        });
+        bb1.terminator = Some(Terminator {
+            source_info: SourceInfo { span: Span::DUMMY },
+            kind: TerminatorKind::Goto {
+                target: BasicBlock::new(3),
+            },
+        });
+        body.basic_blocks.push(bb1);
+
+        // bb2: _0 = copy _2; goto -> bb3
+        let mut bb2 = BasicBlockData::new();
+        bb2.statements.push(Statement {
+            source_info: SourceInfo { span: Span::DUMMY },
+            kind: StatementKind::Assign(
+                Place::from_local(Local::new(0)),
+                Rvalue::Use(Operand::Copy(Place::from_local(Local::new(2)))),
+            ),
+        });
+        bb2.terminator = Some(Terminator {
+            source_info: SourceInfo { span: Span::DUMMY },
+            kind: TerminatorKind::Goto {
+                target: BasicBlock::new(3),
+            },
+        });
+        body.basic_blocks.push(bb2);
+
+        // bb3: return
+        let mut bb3 = BasicBlockData::new();
+        bb3.terminator = Some(Terminator {
+            source_info: SourceInfo { span: Span::DUMMY },
+            kind: TerminatorKind::Return,
+        });
+        body.basic_blocks.push(bb3);
+
+        body
+    }
+
+    #[test]
+    fn snapshot_simple_add_function() {
+        let arena = Arena::new();
+        let types = InternSet::new();
+        let body = create_add_function(&arena, &types);
+        insta::assert_snapshot!(body.pretty_with_name("add").to_string());
+    }
+
+    #[test]
+    fn snapshot_conditional_max_function() {
+        let arena = Arena::new();
+        let types = InternSet::new();
+        let body = create_conditional_function(&arena, &types);
+        insta::assert_snapshot!(body.pretty_with_name("max").to_string());
+    }
+
+    #[test]
+    fn snapshot_empty_body() {
+        let local_decls = IndexVec::new();
+        let body = Body::new(local_decls, 0);
+        insta::assert_snapshot!(body.pretty_with_name("empty").to_string());
+    }
 }

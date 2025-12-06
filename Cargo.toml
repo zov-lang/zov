@@ -23,7 +23,7 @@ num-bigint = "0.4"
 num-traits = "0.2"
 
 # Incremental compilation
-salsa = "0.17"
+salsa = "0.17.0-pre.2"
 
 # Code generation
 cranelift = "0.116"

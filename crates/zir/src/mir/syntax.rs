@@ -13,7 +13,7 @@ pub struct SourceInfo {
 }
 
 /// A span in the source code.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Span {
     /// Start byte offset.
     pub start: u32,

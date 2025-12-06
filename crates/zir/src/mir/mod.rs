@@ -1,8 +1,10 @@
 //! Mid-level Intermediate Representation
 
+mod pretty;
 mod syntax;
 mod visit;
 
+pub use pretty::PrettyPrinter;
 pub use syntax::*;
 pub use visit::{MutVisitor, PlaceContext, Visitor};
 

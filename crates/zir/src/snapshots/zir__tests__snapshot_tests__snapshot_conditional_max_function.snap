@@ -1,0 +1,26 @@
+---
+source: crates/zir/src/tests.rs
+assertion_line: 259
+expression: "body.pretty_with_name(\"max\").to_string()"
+---
+fn max(_1: i64, _2: i64) -> i64 {
+    let mut _3: bool;
+
+    let mut _0: i64;
+
+    bb0: {
+        _3 = Gt(copy _1, copy _2);
+        switchInt(copy _3) -> [0: bb2, otherwise: bb1];
+    }
+    bb1: {
+        _0 = copy _1;
+        goto -> bb3;
+    }
+    bb2: {
+        _0 = copy _2;
+        goto -> bb3;
+    }
+    bb3: {
+        return;
+    }
+}

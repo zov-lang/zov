@@ -1,0 +1,6 @@
+---
+source: crates/zir/src/tests.rs
+assertion_line: 266
+expression: "body.pretty_with_name(\"empty\").to_string()"
+---
+fn empty() {}
