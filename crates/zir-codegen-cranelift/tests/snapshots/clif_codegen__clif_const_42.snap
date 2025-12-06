@@ -1,5 +1,6 @@
 ---
-source: crates/zir-codegen-cranelift/src/lib.rs
+source: crates/zir-codegen-cranelift/tests/clif_codegen.rs
+assertion_line: 187
 expression: clif
 ---
 function u0:0() -> i64 system_v {

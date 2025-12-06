@@ -436,6 +436,72 @@ mod arena_allocation {
     }
 }
 
+mod query_system {
+    //! Tests for the Salsa 0.24 query system.
+
+    use crate::CompilerDatabase;
+    use crate::query::{SourceFile, parse_definitions};
+    use salsa::Setter;
+
+    #[test]
+    fn test_database_creation() {
+        let db = CompilerDatabase::new();
+        let _ = db;
+    }
+
+    #[test]
+    fn test_source_input() {
+        let db = CompilerDatabase::new();
+
+        // Create a source file input
+        let file = SourceFile::new(&db, "fn main() {}".to_string(), "test.zov".to_string());
+
+        // Query source text
+        let text = file.text(&db);
+        assert_eq!(text, "fn main() {}");
+
+        // Query path
+        let path = file.path(&db);
+        assert_eq!(path, "test.zov");
+    }
+
+    #[test]
+    fn test_incremental_update() {
+        let mut db = CompilerDatabase::new();
+
+        // Create initial source
+        let file = SourceFile::new(&db, "fn foo() {}".to_string(), "test.zov".to_string());
+
+        // Query and verify
+        let text1 = file.text(&db);
+        assert_eq!(text1, "fn foo() {}");
+
+        // Update source using setter
+        file.set_text(&mut db).to("fn bar() {}".to_string());
+
+        // Query again - should return updated value
+        let text2 = file.text(&db);
+        assert_eq!(text2, "fn bar() {}");
+    }
+
+    #[test]
+    fn test_parse_definitions() {
+        let db = CompilerDatabase::new();
+
+        // Create a source file
+        let file = SourceFile::new(
+            &db,
+            "fn add(a: i64, b: i64) -> i64 { a + b }".to_string(),
+            "add.zov".to_string(),
+        );
+
+        // Parse definitions returns tracked structs via the tracked function
+        let defs = parse_definitions(&db, file);
+        // Placeholder implementation returns empty list
+        assert!(defs.is_empty());
+    }
+}
+
 mod snapshot_tests {
     //! Snapshot tests for MIR pretty printing using insta.
 
