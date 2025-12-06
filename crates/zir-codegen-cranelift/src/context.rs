@@ -1,5 +1,8 @@
 //! Codegen context for Cranelift
 
+// Allow large error types from Cranelift - we don't control their size
+#![allow(clippy::result_large_err)]
+
 use cranelift::prelude::*;
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::types;

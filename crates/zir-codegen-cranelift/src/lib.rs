@@ -40,8 +40,9 @@ use std::io::Write;
 use zir::mir::Body;
 use zir::ty::{IntWidth, Ty, TyKind};
 use zir_codegen::{
-    CodegenBackend, CodegenConfig, CodegenResults, CodegenUnit, FunctionSignature, IrOutput,
-    OngoingCodegen, OutputFilenames, Session, TargetConfig, TypeDesc, WorkProduct, WorkProductId,
+    CodegenBackend, CodegenConfig, CodegenResult, CodegenResults, CodegenUnit, Error, ErrorKind,
+    FunctionSignature, IrOutput, OngoingCodegen, OutputFilenames, Session, TargetConfig, TypeDesc,
+    WorkProduct, WorkProductId,
 };
 
 /// Cranelift-based code generation backend.
@@ -109,14 +110,16 @@ impl CodegenBackend for CraneliftBackend {
         "cranelift"
     }
 
-    fn init(&self, _sess: &Session) {
+    fn init(&self, _sess: &Session) -> CodegenResult<()> {
         // Cranelift initialization is done in new()
         // This could be extended to configure optimization levels, etc.
+        Ok(())
     }
 
     fn target_config(&self, _sess: &Session) -> TargetConfig {
+        // Cranelift doesn't reliably support f16/f128 yet.
+        // Setting these to false prevents tests from being silently skipped.
         TargetConfig {
-            // Cranelift doesn't reliably support f16/f128 yet
             has_reliable_f16: false,
             has_reliable_f16_math: false,
             has_reliable_f128: false,
@@ -139,17 +142,23 @@ impl CodegenBackend for CraneliftBackend {
         writeln!(out, "  pointer type: {}", self.ctx.ptr_type).unwrap();
     }
 
-    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> OngoingCodegen {
+    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> CodegenResult<OngoingCodegen> {
         let mut ir_outputs = Vec::new();
 
         for (body, signature) in &unit.bodies {
             let clif_sig = self.convert_signature(signature);
-            let clif_text =
-                self.ctx.compile_to_clif(body, clif_sig).expect("failed to compile to CLIF");
+            let clif_text = self.ctx.compile_to_clif(body, clif_sig).map_err(|e| {
+                Box::new(
+                    Error::new(ErrorKind::DefinitionFailed)
+                        .with_message(format!("failed to compile to CLIF: {}", e))
+                        .with_backend("cranelift")
+                        .with_context("unit", unit.name.clone()),
+                )
+            })?;
             ir_outputs.push(clif_text);
         }
 
-        Box::new(CraneliftCodegenResult { ir_outputs })
+        Ok(Box::new(CraneliftCodegenResult { ir_outputs }))
     }
 
     fn join_codegen(
@@ -157,43 +166,76 @@ impl CodegenBackend for CraneliftBackend {
         ongoing: OngoingCodegen,
         _sess: &Session,
         _outputs: &OutputFilenames,
-    ) -> (CodegenResults, HashMap<WorkProductId, WorkProduct>) {
+    ) -> CodegenResult<(CodegenResults, HashMap<WorkProductId, WorkProduct>)> {
         // Downcast the ongoing codegen to our internal type
-        let _result =
-            ongoing.downcast::<CraneliftCodegenResult>().expect("invalid ongoing codegen type");
+        let _result = ongoing.downcast::<CraneliftCodegenResult>().map_err(|_| {
+            Box::new(
+                Error::ice("invalid ongoing codegen type - expected CraneliftCodegenResult")
+                    .with_backend("cranelift"),
+            )
+        })?;
 
         // For JIT, we don't produce object files
-        (CodegenResults::default(), HashMap::new())
+        Ok((CodegenResults::default(), HashMap::new()))
     }
 
-    fn link(&self, _sess: &Session, _results: CodegenResults, _outputs: &OutputFilenames) {
+    fn link(
+        &self,
+        _sess: &Session,
+        _results: CodegenResults,
+        _outputs: &OutputFilenames,
+    ) -> CodegenResult<()> {
         // For JIT compilation, no linking is needed
         // Object file emission would require cranelift-object
+        Ok(())
     }
 
     fn config(&self) -> &CodegenConfig {
         &self.config
     }
 
-    fn compile_function<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature) {
+    fn compile_function<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: FunctionSignature,
+    ) -> CodegenResult<()> {
         let clif_sig = self.convert_signature(&signature);
-        let func_id = self
-            .ctx
-            .declare_function("_anon", clif_sig.clone())
-            .expect("failed to declare function");
-        self.ctx.define_function(func_id, body, clif_sig).expect("failed to define function");
+        let func_id = self.ctx.declare_function("_anon", clif_sig.clone()).map_err(|e| {
+            Box::new(
+                Error::new(ErrorKind::DeclarationFailed)
+                    .with_message(format!("failed to declare function: {}", e))
+                    .with_backend("cranelift"),
+            )
+        })?;
+        self.ctx.define_function(func_id, body, clif_sig).map_err(|e| {
+            Box::new(
+                Error::new(ErrorKind::DefinitionFailed)
+                    .with_message(format!("failed to define function: {}", e))
+                    .with_backend("cranelift"),
+            )
+        })?;
+        Ok(())
     }
 
-    fn compile_to_ir<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature) -> IrOutput {
+    fn compile_to_ir<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: FunctionSignature,
+    ) -> CodegenResult<IrOutput> {
         let clif_sig = self.convert_signature(&signature);
-        let clif_text =
-            self.ctx.compile_to_clif(body, clif_sig).expect("failed to compile to CLIF");
-        IrOutput::Text(clif_text)
+        let clif_text = self.ctx.compile_to_clif(body, clif_sig).map_err(|e| {
+            Box::new(
+                Error::new(ErrorKind::DefinitionFailed)
+                    .with_message(format!("failed to compile to CLIF: {}", e))
+                    .with_backend("cranelift"),
+            )
+        })?;
+        Ok(IrOutput::Text(clif_text))
     }
 
-    fn finalize(self: Box<Self>) -> CodegenResults {
+    fn finalize(self: Box<Self>) -> CodegenResult<CodegenResults> {
         // For JIT, we don't produce object files
-        CodegenResults::default()
+        Ok(CodegenResults::default())
     }
 }
 
@@ -278,12 +320,12 @@ pub fn pointer_type(isa: &dyn TargetIsa) -> types::Type {
 /// use zir_codegen::{CodegenConfig, testing::run_standard_tests};
 /// use zir_codegen_cranelift::create_backend;
 ///
-/// let results = run_standard_tests(create_backend);
+/// let results = run_standard_tests(create_backend)?;
 /// ```
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if the backend cannot be created for the current target.
-pub fn create_backend(config: CodegenConfig) -> Box<dyn CodegenBackend> {
-    Box::new(CraneliftBackend::new(config))
+/// Returns an error if the backend cannot be created for the current target.
+pub fn create_backend(config: CodegenConfig) -> CodegenResult<Box<dyn CodegenBackend>> {
+    Ok(Box::new(CraneliftBackend::new(config)))
 }

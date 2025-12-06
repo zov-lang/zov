@@ -28,7 +28,7 @@
 //! // Verify the generated IR
 //! ```
 
-use crate::{CodegenBackend, CodegenConfig, FunctionSignature, IrOutput, TypeDesc};
+use crate::{CodegenBackend, CodegenConfig, CodegenResult, FunctionSignature, IrOutput, TypeDesc};
 use zir::idx::Idx;
 use zir::intern::InternSet;
 use zir::mir::*;
@@ -253,21 +253,21 @@ pub fn sig_i64_i64_to_i64() -> FunctionSignature {
 ///
 /// # Returns
 ///
-/// The textual IR representation.
+/// The textual IR representation, or an error if compilation fails.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if compilation fails.
+/// Returns an error if compilation fails.
 pub fn compile_to_ir_text(
     backend: &mut dyn CodegenBackend,
     body: &Body<'_>,
     sig: FunctionSignature,
-) -> String {
-    let ir = backend.compile_to_ir(body, sig);
-    match ir {
+) -> CodegenResult<String> {
+    let ir = backend.compile_to_ir(body, sig)?;
+    Ok(match ir {
         IrOutput::Text(text) => text,
         IrOutput::Binary(bytes) => format!("<binary {} bytes>", bytes.len()),
-    }
+    })
 }
 
 /// A test case for backend-agnostic codegen testing.
@@ -293,10 +293,10 @@ impl<'a> CodegenTestCase<'a> {
     ///
     /// Returns the generated IR text.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if compilation fails.
-    pub fn run(&self, backend: &mut dyn CodegenBackend) -> String {
+    /// Returns an error if compilation fails.
+    pub fn run(&self, backend: &mut dyn CodegenBackend) -> CodegenResult<String> {
         compile_to_ir_text(backend, &self.body, self.signature.clone())
     }
 }
@@ -337,22 +337,22 @@ pub fn standard_test_cases<'a>(arena: &'a Arena<'a>) -> Vec<CodegenTestCase<'a>>
 ///
 /// A vector of tuples containing (test_name, ir_output) for each test case.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if backend creation or compilation fails.
-pub fn run_standard_tests<F>(factory: F) -> Vec<(&'static str, String)>
+/// Returns an error if backend creation or compilation fails.
+pub fn run_standard_tests<F>(factory: F) -> CodegenResult<Vec<(&'static str, String)>>
 where
-    F: Fn(CodegenConfig) -> Box<dyn CodegenBackend>,
+    F: Fn(CodegenConfig) -> CodegenResult<Box<dyn CodegenBackend>>,
 {
     let arena = Arena::new();
     let test_cases = standard_test_cases(&arena);
     let mut results = Vec::new();
 
     for test in &test_cases {
-        let mut backend = factory(CodegenConfig::default());
-        let ir = test.run(backend.as_mut());
+        let mut backend = factory(CodegenConfig::default())?;
+        let ir = test.run(backend.as_mut())?;
         results.push((test.name, ir));
     }
 
-    results
+    Ok(results)
 }

@@ -13,6 +13,12 @@
 //!
 //! - [`CodegenBackend`]: The main trait for code generation backends
 //!
+//! # Error Handling
+//!
+//! This crate provides a user-friendly [`Error`] type for codegen errors.
+//! Errors are designed to produce clear, actionable reports useful for
+//! debugging ICE (Internal Compiler Errors) and during development.
+//!
 //! # Testing
 //!
 //! The [`testing`] module provides utilities for writing backend-agnostic
@@ -21,14 +27,14 @@
 //! # Example
 //!
 //! ```ignore
-//! use zir_codegen::{CodegenBackend, CodegenConfig, Session, Target};
+//! use zir_codegen::{CodegenBackend, CodegenConfig, Session, Target, CodegenResult};
 //!
-//! let mut backend = SomeCraneliftBackend::new(CodegenConfig::default());
+//! let mut backend = SomeCraneliftBackend::new(CodegenConfig::default())?;
 //! let session = Session::host();
 //! backend.init(&session);
-//! let result = backend.codegen_unit(unit);
-//! let (results, _) = backend.join_codegen(ongoing, &session, &outputs);
-//! backend.link(&session, results, &outputs);
+//! let result = backend.codegen_unit(unit)?;
+//! let (results, _) = backend.join_codegen(ongoing, &session, &outputs)?;
+//! backend.link(&session, results, &outputs)?;
 //! ```
 
 pub mod testing;
@@ -36,10 +42,249 @@ pub mod testing;
 use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
 use std::io::Write;
 use std::path::PathBuf;
 
 use zir::mir::Body;
+
+// ============================================================================
+// Error Handling
+// ============================================================================
+
+/// Result type alias for codegen operations.
+///
+/// The error is boxed to keep the result type small (clippy::result_large_err).
+pub type CodegenResult<T> = Result<T, Box<Error>>;
+
+/// Code generation error with detailed context for debugging.
+///
+/// This error type is designed to produce clear, actionable reports
+/// that are useful for:
+/// - Debugging Internal Compiler Errors (ICE)
+/// - Development and testing of codegen backends
+/// - User-facing error messages when compilation fails
+///
+/// # Example
+///
+/// ```ignore
+/// use zir_codegen::{Error, ErrorKind};
+///
+/// let error = Error::new(ErrorKind::UnsupportedType)
+///     .with_message("i256 is not supported by the Cranelift backend")
+///     .with_context("function", "my_function")
+///     .with_help("consider using i128 or smaller integer types");
+/// ```
+#[derive(Debug, Clone)]
+pub struct Error {
+    /// The kind of error.
+    pub kind: ErrorKind,
+    /// Human-readable error message.
+    pub message: Cow<'static, str>,
+    /// Additional context about where the error occurred.
+    pub context: Vec<(Cow<'static, str>, Cow<'static, str>)>,
+    /// Optional help text suggesting how to fix the error.
+    pub help: Option<Cow<'static, str>>,
+    /// Optional note with additional information.
+    pub note: Option<Cow<'static, str>>,
+    /// The backend that produced the error (if known).
+    pub backend: Option<Cow<'static, str>>,
+}
+
+impl Error {
+    /// Creates a new error with the given kind.
+    pub fn new(kind: ErrorKind) -> Self {
+        Self {
+            kind,
+            message: kind.default_message(),
+            context: Vec::new(),
+            help: None,
+            note: None,
+            backend: None,
+        }
+    }
+
+    /// Creates a new error with a custom message.
+    pub fn with_message<S: Into<Cow<'static, str>>>(mut self, message: S) -> Self {
+        self.message = message.into();
+        self
+    }
+
+    /// Adds context about where the error occurred.
+    pub fn with_context<K, V>(mut self, key: K, value: V) -> Self
+    where
+        K: Into<Cow<'static, str>>,
+        V: Into<Cow<'static, str>>,
+    {
+        self.context.push((key.into(), value.into()));
+        self
+    }
+
+    /// Adds help text suggesting how to fix the error.
+    pub fn with_help<S: Into<Cow<'static, str>>>(mut self, help: S) -> Self {
+        self.help = Some(help.into());
+        self
+    }
+
+    /// Adds a note with additional information.
+    pub fn with_note<S: Into<Cow<'static, str>>>(mut self, note: S) -> Self {
+        self.note = Some(note.into());
+        self
+    }
+
+    /// Sets the backend that produced the error.
+    pub fn with_backend<S: Into<Cow<'static, str>>>(mut self, backend: S) -> Self {
+        self.backend = Some(backend.into());
+        self
+    }
+
+    /// Creates an error for an unsupported feature.
+    pub fn unsupported<S: Into<Cow<'static, str>>>(feature: S) -> Self {
+        Self::new(ErrorKind::UnsupportedFeature).with_message(feature)
+    }
+
+    /// Creates an error for an unsupported type.
+    pub fn unsupported_type<S: Into<Cow<'static, str>>>(ty: S) -> Self {
+        Self::new(ErrorKind::UnsupportedType).with_context("type", ty)
+    }
+
+    /// Creates an error for an unsupported operation.
+    pub fn unsupported_op<S: Into<Cow<'static, str>>>(op: S) -> Self {
+        Self::new(ErrorKind::UnsupportedOperation).with_context("operation", op)
+    }
+
+    /// Creates an internal compiler error (ICE).
+    pub fn ice<S: Into<Cow<'static, str>>>(message: S) -> Self {
+        Self::new(ErrorKind::InternalError).with_message(message)
+    }
+
+    /// Creates a backend initialization error.
+    pub fn init_failed<S: Into<Cow<'static, str>>>(message: S) -> Self {
+        Self::new(ErrorKind::InitializationFailed).with_message(message)
+    }
+
+    /// Creates a linking error.
+    pub fn link_failed<S: Into<Cow<'static, str>>>(message: S) -> Self {
+        Self::new(ErrorKind::LinkingFailed).with_message(message)
+    }
+
+    /// Formats the error for pretty printing.
+    ///
+    /// Returns a multi-line string with all error details formatted
+    /// for easy reading in terminal output or logs.
+    pub fn pretty_print(&self) -> String {
+        let mut output = String::new();
+
+        // Error header
+        output.push_str(&format!("error[{}]: {}\n", self.kind.code(), self.message));
+
+        // Backend info
+        if let Some(ref backend) = self.backend {
+            output.push_str(&format!("  --> backend: {}\n", backend));
+        }
+
+        // Context
+        if !self.context.is_empty() {
+            output.push_str("  |\n");
+            for (key, value) in &self.context {
+                output.push_str(&format!("  | {}: {}\n", key, value));
+            }
+        }
+
+        // Note
+        if let Some(ref note) = self.note {
+            output.push_str(&format!("  = note: {}\n", note));
+        }
+
+        // Help
+        if let Some(ref help) = self.help {
+            output.push_str(&format!("  = help: {}\n", help));
+        }
+
+        output
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// The kind of codegen error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// An unsupported feature was requested.
+    UnsupportedFeature,
+    /// An unsupported type was encountered.
+    UnsupportedType,
+    /// An unsupported operation was encountered.
+    UnsupportedOperation,
+    /// Backend initialization failed.
+    InitializationFailed,
+    /// Function declaration failed.
+    DeclarationFailed,
+    /// Function definition failed.
+    DefinitionFailed,
+    /// Module finalization failed.
+    FinalizationFailed,
+    /// Linking failed.
+    LinkingFailed,
+    /// Invalid MIR was provided.
+    InvalidMir,
+    /// Internal compiler error (ICE).
+    InternalError,
+    /// I/O error during code generation.
+    IoError,
+}
+
+impl ErrorKind {
+    /// Returns the error code for this kind.
+    pub fn code(self) -> &'static str {
+        match self {
+            ErrorKind::UnsupportedFeature => "E0001",
+            ErrorKind::UnsupportedType => "E0002",
+            ErrorKind::UnsupportedOperation => "E0003",
+            ErrorKind::InitializationFailed => "E0010",
+            ErrorKind::DeclarationFailed => "E0011",
+            ErrorKind::DefinitionFailed => "E0012",
+            ErrorKind::FinalizationFailed => "E0013",
+            ErrorKind::LinkingFailed => "E0014",
+            ErrorKind::InvalidMir => "E0020",
+            ErrorKind::InternalError => "E9999",
+            ErrorKind::IoError => "E0030",
+        }
+    }
+
+    /// Returns the default message for this error kind.
+    pub fn default_message(self) -> Cow<'static, str> {
+        match self {
+            ErrorKind::UnsupportedFeature => "unsupported feature".into(),
+            ErrorKind::UnsupportedType => "unsupported type".into(),
+            ErrorKind::UnsupportedOperation => "unsupported operation".into(),
+            ErrorKind::InitializationFailed => "backend initialization failed".into(),
+            ErrorKind::DeclarationFailed => "function declaration failed".into(),
+            ErrorKind::DefinitionFailed => "function definition failed".into(),
+            ErrorKind::FinalizationFailed => "module finalization failed".into(),
+            ErrorKind::LinkingFailed => "linking failed".into(),
+            ErrorKind::InvalidMir => "invalid MIR".into(),
+            ErrorKind::InternalError => "internal compiler error".into(),
+            ErrorKind::IoError => "I/O error during code generation".into(),
+        }
+    }
+}
+
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.default_message())
+    }
+}
+
+// ============================================================================
+// Target Specification
+// ============================================================================
 
 /// Target specification for code generation.
 ///
@@ -430,10 +675,10 @@ impl FunctionSignature {
 ///
 /// # Error Handling
 ///
-/// Like rustc's codegen backends, errors during code generation are
-/// typically unrecoverable. Methods either succeed or panic with an
-/// informative error message. This simplifies the API and matches
-/// how real compilers handle internal errors.
+/// Methods return [`CodegenResult<T>`] which wraps results with a
+/// user-friendly [`Error`] type. This allows callers to handle errors
+/// gracefully and provides detailed context for debugging ICE and
+/// development issues.
 ///
 /// # Backend Responsibilities
 ///
@@ -454,13 +699,14 @@ impl FunctionSignature {
 ///         "cranelift"
 ///     }
 ///
-///     fn init(&self, sess: &Session) {
+///     fn init(&self, sess: &Session) -> CodegenResult<()> {
 ///         // Initialize backend with session configuration
+///         Ok(())
 ///     }
 ///
-///     fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> OngoingCodegen {
+///     fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> CodegenResult<OngoingCodegen> {
 ///         // Compile the unit
-///         Box::new(results)
+///         Ok(Box::new(results))
 ///     }
 ///
 ///     fn join_codegen(
@@ -468,13 +714,15 @@ impl FunctionSignature {
 ///         ongoing: OngoingCodegen,
 ///         sess: &Session,
 ///         outputs: &OutputFilenames,
-///     ) -> (CodegenResults, HashMap<WorkProductId, WorkProduct>) {
+///     ) -> CodegenResult<(CodegenResults, HashMap<WorkProductId, WorkProduct>)> {
 ///         // Combine results
-///         (results, work_products)
+///         Ok((results, work_products))
 ///     }
 ///
-///     fn link(&self, sess: &Session, results: CodegenResults, outputs: &OutputFilenames) {
+///     fn link(&self, sess: &Session, results: CodegenResults, outputs: &OutputFilenames)
+///         -> CodegenResult<()> {
 ///         // Link the final output
+///         Ok(())
 ///     }
 /// }
 /// ```
@@ -486,12 +734,22 @@ pub trait CodegenBackend: Any {
     ///
     /// This is called once before any codegen operations. Backends
     /// can use this to set up internal state based on compiler options.
-    fn init(&self, _sess: &Session) {}
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if initialization fails.
+    fn init(&self, _sess: &Session) -> CodegenResult<()> {
+        Ok(())
+    }
 
     /// Returns target-specific configuration.
     ///
     /// This allows backends to report what features they support for
     /// the current target, enabling frontend decisions about code generation.
+    ///
+    /// Note: The default returns `has_reliable_f16/f128 = true` so that
+    /// backends must explicitly acknowledge when they don't support these
+    /// types, rather than silently skipping tests.
     fn target_config(&self, _sess: &Session) -> TargetConfig {
         TargetConfig::new()
     }
@@ -520,10 +778,10 @@ pub trait CodegenBackend: Any {
     /// For simple use cases, this can directly return the compiled results.
     /// For parallel compilation, this returns a handle that will be joined later.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if code generation fails.
-    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> OngoingCodegen;
+    /// Returns an error if code generation fails.
+    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> CodegenResult<OngoingCodegen>;
 
     /// Joins ongoing codegen and produces final results.
     ///
@@ -531,15 +789,15 @@ pub trait CodegenBackend: Any {
     /// It combines the results and produces the final `CodegenResults`
     /// along with any work products for incremental compilation.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the ongoing codegen type is invalid or joining fails.
+    /// Returns an error if the ongoing codegen type is invalid or joining fails.
     fn join_codegen(
         &self,
         ongoing: OngoingCodegen,
         sess: &Session,
         outputs: &OutputFilenames,
-    ) -> (CodegenResults, HashMap<WorkProductId, WorkProduct>);
+    ) -> CodegenResult<(CodegenResults, HashMap<WorkProductId, WorkProduct>)>;
 
     /// Links the compiled modules into the final output.
     ///
@@ -547,10 +805,15 @@ pub trait CodegenBackend: Any {
     /// modules from `join_codegen()` and produces the final executable,
     /// library, or object file.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if linking fails.
-    fn link(&self, sess: &Session, results: CodegenResults, outputs: &OutputFilenames);
+    /// Returns an error if linking fails.
+    fn link(
+        &self,
+        sess: &Session,
+        results: CodegenResults,
+        outputs: &OutputFilenames,
+    ) -> CodegenResult<()>;
 
     /// Returns the configuration for this backend.
     fn config(&self) -> &CodegenConfig;
@@ -562,10 +825,14 @@ pub trait CodegenBackend: Any {
     /// This is a convenience method for simple use cases where you just
     /// want to compile a single function without the full codegen_unit pipeline.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if compilation fails.
-    fn compile_function<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature);
+    /// Returns an error if compilation fails.
+    fn compile_function<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: FunctionSignature,
+    ) -> CodegenResult<()>;
 
     /// Compiles a MIR function and returns the IR representation.
     ///
@@ -573,24 +840,28 @@ pub trait CodegenBackend: Any {
     /// without actually executing the generated code. The returned
     /// IR can be compared against expected snapshots.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if compilation fails.
-    fn compile_to_ir<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature) -> IrOutput;
+    /// Returns an error if compilation fails.
+    fn compile_to_ir<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: FunctionSignature,
+    ) -> CodegenResult<IrOutput>;
 
     /// Finalizes the compilation and returns the results.
     ///
     /// This is a convenience method that combines `join_codegen()` with
     /// default session and output settings.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if finalization fails.
-    fn finalize(self: Box<Self>) -> CodegenResults;
+    /// Returns an error if finalization fails.
+    fn finalize(self: Box<Self>) -> CodegenResult<CodegenResults>;
 }
 
 /// Factory function type for creating backends.
-pub type BackendFactory = fn(CodegenConfig) -> Box<dyn CodegenBackend>;
+pub type BackendFactory = fn(CodegenConfig) -> CodegenResult<Box<dyn CodegenBackend>>;
 
 #[cfg(test)]
 mod tests {
@@ -710,5 +981,87 @@ mod tests {
     fn test_reloc_model_default() {
         let model = RelocModel::default();
         assert_eq!(model, RelocModel::Pic);
+    }
+
+    #[test]
+    fn test_error_creation() {
+        let error = Error::new(ErrorKind::UnsupportedType);
+        assert_eq!(error.kind, ErrorKind::UnsupportedType);
+        assert_eq!(error.message.as_ref(), "unsupported type");
+    }
+
+    #[test]
+    fn test_error_builder() {
+        let error = Error::new(ErrorKind::UnsupportedFeature)
+            .with_message("f16 not supported")
+            .with_context("function", "compute_sum")
+            .with_backend("cranelift")
+            .with_help("use f32 instead")
+            .with_note("f16 support is experimental");
+
+        assert_eq!(error.message.as_ref(), "f16 not supported");
+        assert_eq!(error.context.len(), 1);
+        assert_eq!(error.context[0].0.as_ref(), "function");
+        assert_eq!(error.context[0].1.as_ref(), "compute_sum");
+        assert_eq!(error.backend.as_ref().unwrap().as_ref(), "cranelift");
+        assert_eq!(error.help.as_ref().unwrap().as_ref(), "use f32 instead");
+        assert_eq!(error.note.as_ref().unwrap().as_ref(), "f16 support is experimental");
+    }
+
+    #[test]
+    fn test_error_convenience_constructors() {
+        let e1 = Error::unsupported("AVX-512");
+        assert_eq!(e1.kind, ErrorKind::UnsupportedFeature);
+        assert_eq!(e1.message.as_ref(), "AVX-512");
+
+        let e2 = Error::unsupported_type("i256");
+        assert_eq!(e2.kind, ErrorKind::UnsupportedType);
+        assert_eq!(e2.context[0].1.as_ref(), "i256");
+
+        let e3 = Error::ice("internal assertion failed");
+        assert_eq!(e3.kind, ErrorKind::InternalError);
+    }
+
+    #[test]
+    fn test_error_kind_codes() {
+        assert_eq!(ErrorKind::UnsupportedFeature.code(), "E0001");
+        assert_eq!(ErrorKind::InternalError.code(), "E9999");
+    }
+
+    #[test]
+    fn test_error_pretty_print() {
+        let error = Error::new(ErrorKind::UnsupportedType)
+            .with_message("i256 is not supported")
+            .with_backend("cranelift")
+            .with_context("function", "test_fn")
+            .with_note("only i8-i128 are supported")
+            .with_help("use i128 instead");
+
+        let pretty = error.pretty_print();
+        assert!(pretty.contains("error[E0002]"));
+        assert!(pretty.contains("i256 is not supported"));
+        assert!(pretty.contains("backend: cranelift"));
+        assert!(pretty.contains("function: test_fn"));
+        assert!(pretty.contains("note:"));
+        assert!(pretty.contains("help:"));
+    }
+
+    #[test]
+    fn test_error_display() {
+        let error = Error::new(ErrorKind::UnsupportedType).with_message("test error");
+        assert_eq!(format!("{}", error), "test error");
+    }
+
+    #[test]
+    fn test_codegen_result_type() {
+        fn returns_ok() -> CodegenResult<i32> {
+            Ok(42)
+        }
+        fn returns_err() -> CodegenResult<i32> {
+            Err(Box::new(Error::ice("test")))
+        }
+
+        assert_eq!(returns_ok().unwrap(), 42);
+        assert!(returns_err().is_err());
     }
 }
