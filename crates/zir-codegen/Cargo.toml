@@ -9,17 +9,17 @@ description = "Cranelift code generation backend for ZIR"
 [dependencies]
 zir = { path = "../zir" }
 
-cranelift.workspace = true
-cranelift-module.workspace = true
-cranelift-jit.workspace = true
-cranelift-object.workspace = true
-cranelift-native.workspace = true
-cranelift-codegen.workspace = true
-cranelift-frontend.workspace = true
-target-lexicon.workspace = true
+cranelift = { workspace = true }
+cranelift-module = { workspace = true }
+cranelift-jit = { workspace = true }
+cranelift-object = { workspace = true }
+cranelift-native = { workspace = true }
+cranelift-codegen = { workspace = true }
+cranelift-frontend = { workspace = true }
+target-lexicon = { workspace = true }
 
-index_vec.workspace = true
-rustc-hash.workspace = true
+index_vec = { workspace = true }
+rustc-hash = { workspace = true }
 
 [dev-dependencies]
-insta.workspace = true
+insta = { workspace = true }

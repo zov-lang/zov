@@ -171,40 +171,44 @@ pub enum UnOp {
     Neg,
 }
 
-/// Binary operators.
+/// Binary operators for arithmetic, bitwise, and comparison operations.
+///
+/// Used in `Rvalue::BinaryOp` to represent two-operand operations.
+/// Comparison operators return `bool`, arithmetic/bitwise operators return
+/// a value of the same type as their operands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BinOp {
-    /// Addition.
+    /// Integer addition: `a + b`
     Add,
-    /// Subtraction.
+    /// Integer subtraction: `a - b`
     Sub,
-    /// Multiplication.
+    /// Integer multiplication: `a * b`
     Mul,
-    /// Division.
+    /// Integer division: `a / b` (truncates toward zero)
     Div,
-    /// Remainder.
+    /// Integer remainder: `a % b` (sign follows dividend)
     Rem,
-    /// Bitwise XOR.
+    /// Bitwise XOR: `a ^ b`
     BitXor,
-    /// Bitwise AND.
+    /// Bitwise AND: `a & b`
     BitAnd,
-    /// Bitwise OR.
+    /// Bitwise OR: `a | b`
     BitOr,
-    /// Left shift.
+    /// Left shift: `a << b`
     Shl,
-    /// Right shift.
+    /// Right shift: `a >> b` (arithmetic for signed, logical for unsigned)
     Shr,
-    /// Equality.
+    /// Equality comparison: `a == b`
     Eq,
-    /// Less than.
+    /// Less than comparison: `a < b`
     Lt,
-    /// Less than or equal.
+    /// Less than or equal comparison: `a <= b`
     Le,
-    /// Not equal.
+    /// Not equal comparison: `a != b`
     Ne,
-    /// Greater than or equal.
+    /// Greater than or equal comparison: `a >= b`
     Ge,
-    /// Greater than.
+    /// Greater than comparison: `a > b`
     Gt,
 }
 
@@ -237,37 +241,23 @@ pub struct Terminator<'zir> {
     pub kind: TerminatorKind<'zir>,
 }
 
-/// Kinds of terminators.
+/// Kinds of terminators that end a basic block.
 #[derive(Clone, Debug)]
 pub enum TerminatorKind<'zir> {
-    /// Unconditional jump.
-    Goto {
-        target: BasicBlock,
-    },
-
+    /// Unconditional jump to target block.
+    Goto { target: BasicBlock },
     /// Conditional switch on an integer value.
-    SwitchInt {
-        discr: Operand<'zir>,
-        targets: SwitchTargets,
-    },
-
+    SwitchInt { discr: Operand<'zir>, targets: SwitchTargets },
     /// Return from function.
     Return,
-
-    /// Unreachable code.
+    /// Unreachable code marker.
     Unreachable,
-
-    /// Function call.
+    /// Function call with destination and optional continuation block.
     Call {
-        /// The function to call.
         func: Operand<'zir>,
-        /// Function arguments.
         args: Vec<Operand<'zir>>,
-        /// Destination for return value.
         dest: Place<'zir>,
-        /// Block to jump to after call (None for diverging).
         target: Option<BasicBlock>,
-        /// Span for the call.
         fn_span: Span,
     },
 }

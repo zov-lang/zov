@@ -1,4 +1,4 @@
-//! ZIR - Universal Mid-level Intermediate Representation
+//! ZIR - Middle-level Intermediate Representation
 //!
 //! A language-independent MIR designed for:
 //! - Arena-based memory management
