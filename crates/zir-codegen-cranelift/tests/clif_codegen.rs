@@ -12,10 +12,33 @@ use zir_codegen::testing::{
 use zir_codegen::{CodegenConfig, FunctionSignature};
 use zir_codegen_cranelift::create_backend;
 
+/// Known calling conventions that vary by platform.
+/// We normalize these to a generic placeholder for cross-platform snapshot testing.
+const CALLING_CONVENTIONS: &[&str] =
+    &["system_v", "apple_aarch64", "windows_fastcall", "fast", "cold", "tail"];
+
+/// Normalizes platform-specific calling conventions in CLIF output.
+///
+/// This replaces platform-specific calling conventions (like `system_v`, `apple_aarch64`)
+/// with a generic `<calling_conv>` placeholder to make snapshots portable across platforms.
+fn normalize_calling_convention(clif: &str) -> String {
+    let mut result = clif.to_string();
+    for conv in CALLING_CONVENTIONS {
+        // Match the calling convention at the end of function signature line
+        // e.g., "function u0:0(i64, i64) -> i64 system_v {" -> "function u0:0(i64, i64) -> i64 <calling_conv> {"
+        let pattern = format!(" {} {{", conv);
+        let replacement = " <calling_conv> {";
+        result = result.replace(&pattern, replacement);
+    }
+    result
+}
+
 /// Helper to compile MIR to CLIF using the backend factory.
+/// The output is normalized to remove platform-specific calling conventions.
 fn compile_to_clif(body: &mir::Body<'_>, sig: FunctionSignature) -> String {
     let mut backend = create_backend(CodegenConfig::default());
-    compile_to_ir_text(backend.as_mut(), body, sig).expect("failed to compile to CLIF")
+    let clif = compile_to_ir_text(backend.as_mut(), body, sig).expect("failed to compile to CLIF");
+    normalize_calling_convention(&clif)
 }
 
 #[test]
