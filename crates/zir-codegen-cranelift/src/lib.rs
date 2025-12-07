@@ -1,9 +1,4 @@
-//! Cranelift code generation backend for ZIR
-//!
-//! Translates ZIR MIR to Cranelift IR and generates native code.
-//!
-//! This crate implements the [`zir_codegen::CodegenBackend`] trait
-//! using Cranelift as the code generation backend.
+//! Cranelift code generation backend for ZIR.
 
 mod analyze;
 mod context;
@@ -22,51 +17,35 @@ use cranelift_module::Module;
 use zir::mir::Body;
 use zir::ty::{IntWidth, Ty, TyKind};
 use zir_codegen::{
-    CodegenBackend, CodegenConfig, CodegenResult, CodegenResults, CodegenUnit, CompiledModule,
-    FunctionSignature, OngoingCodegen, OutputFilenames, Session, TargetConfig, TypeDesc,
-    WorkProduct, WorkProductId,
+    CodegenBackend, CodegenConfig, CodegenResults, CodegenUnit, CompiledModule, FunctionSignature,
+    OngoingCodegen, OutputFilenames, Result, Session, TargetConfig, TypeDesc, WorkProduct,
+    WorkProductId,
 };
 
-/// Cranelift-based code generation backend.
-///
-/// This backend uses Cranelift to generate native code from ZIR MIR.
-/// It supports both JIT compilation and object file generation.
 pub struct CraneliftBackend {
-    /// The codegen context.
     ctx: CodegenContext<JITModule>,
-    /// Configuration for this backend.
     config: CodegenConfig,
 }
 
-/// Internal result from codegen_unit for joining later.
 struct CraneliftCodegenResult {
-    /// Compiled modules with their IR text.
     modules: Vec<CompiledModule>,
 }
 
 impl CraneliftBackend {
-    /// Creates a new Cranelift backend.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the Cranelift JIT module cannot be created for the current target.
     pub fn new(config: CodegenConfig) -> Self {
         let module = create_jit_module();
         let ctx = CodegenContext::new(module);
         Self { ctx, config }
     }
 
-    /// Returns a reference to the underlying codegen context.
     pub fn context(&self) -> &CodegenContext<JITModule> {
         &self.ctx
     }
 
-    /// Returns a mutable reference to the underlying codegen context.
     pub fn context_mut(&mut self) -> &mut CodegenContext<JITModule> {
         &mut self.ctx
     }
 
-    /// Converts a backend-agnostic signature to a Cranelift signature.
     fn convert_signature(&self, sig: &FunctionSignature) -> Signature {
         let mut clif_sig = self.ctx.module.make_signature();
 
@@ -91,17 +70,10 @@ impl CodegenBackend for CraneliftBackend {
         "cranelift"
     }
 
-    fn init(&self, _sess: &Session) {
-        // Cranelift initialization is done in new()
-        // This could be extended to configure optimization levels, etc.
-    }
-
     fn target_config(&self, _sess: &Session) -> TargetConfig {
-        let target_features = vec![];
-        let unstable_target_features = vec![];
         TargetConfig {
-            target_features,
-            unstable_target_features,
+            target_features: vec![],
+            unstable_target_features: vec![],
             has_reliable_f16: false,
             has_reliable_f16_math: false,
             has_reliable_f128: false,
@@ -109,20 +81,12 @@ impl CodegenBackend for CraneliftBackend {
         }
     }
 
-    fn print_passes(&self) {
-        // Cranelift passes are internal, but we could list optimization passes
-    }
-
-    fn print_version(&self) {
-        // Print Cranelift version info
-    }
-
     fn print(&self, out: &mut dyn Write) {
         writeln!(out, "Cranelift backend").unwrap();
         writeln!(out, "  pointer type: {}", self.ctx.ptr_type).unwrap();
     }
 
-    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> CodegenResult<OngoingCodegen> {
+    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> Result<OngoingCodegen> {
         let mut modules = Vec::new();
 
         for (idx, (body, signature)) in unit.bodies.iter().enumerate() {
@@ -155,10 +119,7 @@ impl CodegenBackend for CraneliftBackend {
         (results, HashMap::new())
     }
 
-    fn link(&self, _sess: &Session, _results: CodegenResults, _outputs: &OutputFilenames) {
-        // For JIT compilation, no linking is needed
-        // Object file emission would require cranelift-object
-    }
+    fn link(&self, _sess: &Session, _results: CodegenResults, _outputs: &OutputFilenames) {}
 
     fn config(&self) -> &CodegenConfig {
         &self.config
@@ -168,7 +129,7 @@ impl CodegenBackend for CraneliftBackend {
         &mut self,
         body: &Body<'zir>,
         signature: FunctionSignature,
-    ) -> CodegenResult<()> {
+    ) -> Result<()> {
         let clif_sig = self.convert_signature(&signature);
         let func_id = self.ctx.declare_function("_anon", clif_sig.clone())?;
         self.ctx.define_function(func_id, body, clif_sig)?;
@@ -179,18 +140,16 @@ impl CodegenBackend for CraneliftBackend {
         &mut self,
         body: &Body<'zir>,
         signature: FunctionSignature,
-    ) -> CodegenResult<String> {
+    ) -> Result<String> {
         let clif_sig = self.convert_signature(&signature);
         self.ctx.compile_to_clif(body, clif_sig)
     }
 
     fn finalize(self: Box<Self>) -> CodegenResults {
-        // For JIT, we don't produce object files
         CodegenResults::default()
     }
 }
 
-/// Converts a [`TypeDesc`] to a Cranelift type.
 fn type_desc_to_clif(ty: &TypeDesc, ptr_type: types::Type) -> Option<types::Type> {
     match ty {
         TypeDesc::Bool => Some(types::I8),
@@ -206,11 +165,6 @@ fn type_desc_to_clif(ty: &TypeDesc, ptr_type: types::Type) -> Option<types::Type
     }
 }
 
-/// Creates a JIT module for the current target.
-///
-/// # Panics
-///
-/// Panics if the JIT module cannot be created for the current target.
 pub fn create_jit_module() -> JITModule {
     let mut flag_builder = settings::builder();
     flag_builder.set("use_colocated_libcalls", "false").unwrap();
@@ -226,7 +180,6 @@ pub fn create_jit_module() -> JITModule {
     JITModule::new(builder)
 }
 
-/// Converts a ZIR type to a Cranelift type.
 pub fn clif_type<'zir>(ty: Ty<'zir>, ptr_type: types::Type) -> Option<types::Type> {
     match &*ty {
         TyKind::Bool => Some(types::I8),
@@ -239,7 +192,6 @@ pub fn clif_type<'zir>(ty: Ty<'zir>, ptr_type: types::Type) -> Option<types::Typ
     }
 }
 
-/// Converts an integer width to a Cranelift type.
 fn int_width_to_clif(width: IntWidth, ptr_type: types::Type) -> Option<types::Type> {
     match width {
         IntWidth::Size => Some(ptr_type),
@@ -249,21 +201,15 @@ fn int_width_to_clif(width: IntWidth, ptr_type: types::Type) -> Option<types::Ty
             17..=32 => Some(types::I32),
             33..=64 => Some(types::I64),
             65..=128 => Some(types::I128),
-            _ => None, // Larger types need special handling
+            _ => None,
         },
     }
 }
 
-/// Returns the pointer type for the target.
 pub fn pointer_type(isa: &dyn TargetIsa) -> types::Type {
     isa.pointer_type()
 }
 
-/// Creates a Cranelift backend as a boxed trait object.
-///
-/// This is the factory function for creating Cranelift backends in a
-/// backend-agnostic way. It returns a `Box<dyn CodegenBackend>` which
-/// can be used with the testing utilities in `zir_codegen::testing`.
 pub fn create_backend(config: CodegenConfig) -> Box<dyn CodegenBackend> {
     Box::new(CraneliftBackend::new(config))
 }

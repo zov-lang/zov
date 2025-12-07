@@ -1,6 +1,5 @@
-//! Codegen context for Cranelift
+//! Codegen context for Cranelift.
 
-// Allow large error types from Cranelift - we don't control their size
 #![allow(clippy::result_large_err)]
 
 use cranelift::prelude::*;
@@ -16,54 +15,38 @@ use zir::mir::{
     SourceInfo, StatementKind, TerminatorKind, UnOp,
 };
 use zir::ty::{Ty, TyKind};
-use zir_codegen::{CodegenError, CodegenResult};
+use zir_codegen::{Error, Result, TyData};
 
 use crate::analyze::{SsaKind, analyze_ssa};
 use crate::clif_type;
 use crate::place::CPlace;
 use crate::value::{CValue, Pointer};
 
-/// Global codegen context.
 pub struct CodegenContext<M: Module> {
-    /// The Cranelift module.
     pub module: M,
-    /// Codegen context for functions.
     pub ctx: Context,
-    /// Pointer type for the target.
     pub ptr_type: types::Type,
-    /// Defined functions.
     pub functions: FxHashMap<DefId, FuncId>,
 }
 
 impl<M: Module> CodegenContext<M> {
-    /// Creates a new codegen context.
     pub fn new(module: M) -> Self {
         let ptr_type = module.isa().pointer_type();
         Self { module, ctx: Context::new(), ptr_type, functions: FxHashMap::default() }
     }
 
-    /// Declares a function.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CodegenError::ModuleError` if the function cannot be declared.
-    pub fn declare_function(&mut self, name: &str, signature: Signature) -> CodegenResult<FuncId> {
+    pub fn declare_function(&mut self, name: &str, signature: Signature) -> Result<FuncId> {
         self.module
             .declare_function(name, Linkage::Export, &signature)
-            .map_err(|e| CodegenError::module_error(e.to_string()))
+            .map_err(|e| Error::module(e.to_string()))
     }
 
-    /// Defines a function from MIR.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CodegenError` if the function cannot be defined or code generation fails.
     pub fn define_function<'zir>(
         &mut self,
         func_id: FuncId,
         body: &Body<'zir>,
         signature: Signature,
-    ) -> CodegenResult<()> {
+    ) -> Result<()> {
         self.ctx.func.signature = signature;
 
         let mut builder_ctx = FunctionBuilderContext::new();
@@ -75,25 +58,17 @@ impl<M: Module> CodegenContext<M> {
 
         self.module
             .define_function(func_id, &mut self.ctx)
-            .map_err(|e| CodegenError::module_error(e.to_string()))?;
+            .map_err(|e| Error::module(e.to_string()))?;
 
         self.ctx.clear();
         Ok(())
     }
 
-    /// Compiles a function to Cranelift IR without defining it in the module.
-    ///
-    /// Returns the CLIF textual representation of the generated Cranelift IR.
-    /// This is useful for testing the codegen output without JIT execution.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CodegenError` if code generation fails.
     pub fn compile_to_clif<'zir>(
         &mut self,
         body: &Body<'zir>,
         signature: Signature,
-    ) -> CodegenResult<String> {
+    ) -> Result<String> {
         self.ctx.func.signature = signature;
 
         let mut builder_ctx = FunctionBuilderContext::new();
@@ -103,37 +78,25 @@ impl<M: Module> CodegenContext<M> {
         fx.codegen()?;
         fx.builder.finalize();
 
-        // Capture the CLIF IR representation before clearing
         let clif_output = self.ctx.func.display().to_string();
-
         self.ctx.clear();
         Ok(clif_output)
     }
 }
 
-/// Function-level codegen context.
 pub struct FunctionCodegen<'a, 'zir> {
-    /// The function builder.
     pub builder: FunctionBuilder<'a>,
-    /// Pointer type for the target.
     ptr_type: types::Type,
-    /// The MIR body.
     body: &'a Body<'zir>,
-    /// Block map from MIR to Cranelift.
     block_map: IndexVec<BasicBlock, Block>,
-    /// Local variable storage.
     locals: IndexVec<Local, CPlace<'zir>>,
-    /// SSA analysis results.
     ssa_kinds: IndexVec<Local, SsaKind>,
-    /// Current source info for error reporting.
     current_source_info: SourceInfo,
 }
 
 impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
-    /// Creates a new function codegen context.
     pub fn new(ptr_type: types::Type, body: &'a Body<'zir>, builder: FunctionBuilder<'a>) -> Self {
         let ssa_kinds = analyze_ssa(body);
-
         Self {
             builder,
             ptr_type,
@@ -145,23 +108,15 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
         }
     }
 
-    /// Creates an error with the current source location.
-    fn error(&self, message: impl Into<String>) -> CodegenError {
-        CodegenError::compile_error(self.current_source_info.span, message)
+    fn error(&self, message: &'static str) -> Error {
+        Error::compile(self.current_source_info.span, message)
     }
 
-    /// Creates a type not supported error.
-    fn type_error(&self, ty: Ty<'zir>) -> CodegenError {
-        CodegenError::TypeNotSupported { ty: format!("{:?}", ty) }
+    fn type_error(&self, ty: Ty<'zir>) -> Error {
+        Error::type_not_supported(TyData::from_kind(&ty))
     }
 
-    /// Generates code for the function.
-    ///
-    /// # Errors
-    ///
-    /// Returns `CodegenError` if code generation fails due to invalid MIR or unsupported features.
-    /// Compilation stops immediately on the first error (stop-compilation semantics).
-    pub fn codegen(&mut self) -> CodegenResult<()> {
+    pub fn codegen(&mut self) -> Result<()> {
         // Create blocks
         for _ in self.body.basic_blocks.iter() {
             let block = self.builder.create_block();
@@ -226,7 +181,6 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
         Ok(())
     }
 
-    /// Sets up local variables.
     fn setup_locals(&mut self) {
         for (local, decl) in self.body.local_decls.iter_enumerated() {
             let place = if self.ssa_kinds[local] == SsaKind::MaybeSsa {
@@ -256,7 +210,6 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
         }
     }
 
-    /// Returns the size of a type in bytes.
     fn type_size(ty: Ty<'zir>) -> u32 {
         match &*ty {
             TyKind::Bool => 1,
@@ -268,8 +221,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
         }
     }
 
-    /// Generates code for a statement.
-    fn codegen_statement(&mut self, stmt: &zir::mir::Statement<'zir>) -> CodegenResult<()> {
+    fn codegen_statement(&mut self, stmt: &zir::mir::Statement<'zir>) -> Result<()> {
         match &stmt.kind {
             StatementKind::Assign(place, rvalue) => {
                 let value = self.codegen_rvalue(rvalue)?;
@@ -277,15 +229,12 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 dest.store(&mut self.builder, value, self.ptr_type);
             }
             StatementKind::Nop => {}
-            StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {
-                // Ignored for now
-            }
+            StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
         }
         Ok(())
     }
 
-    /// Generates code for an rvalue.
-    fn codegen_rvalue(&mut self, rvalue: &Rvalue<'zir>) -> CodegenResult<CValue<'zir>> {
+    fn codegen_rvalue(&mut self, rvalue: &Rvalue<'zir>) -> Result<CValue<'zir>> {
         match rvalue {
             Rvalue::Use(operand) => self.codegen_operand(operand),
             Rvalue::BinaryOp(op, lhs, rhs) => {
@@ -294,10 +243,10 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
 
                 let lhs_loaded = lhs_val
                     .load(&mut self.builder, self.ptr_type)
-                    .ok_or_else(|| self.error("binary operation on zero-sized type"))?;
+                    .ok_or_else(|| self.error("binop on ZST"))?;
                 let rhs_loaded = rhs_val
                     .load(&mut self.builder, self.ptr_type)
-                    .ok_or_else(|| self.error("binary operation on zero-sized type"))?;
+                    .ok_or_else(|| self.error("binop on ZST"))?;
 
                 let result = self.codegen_binop(*op, lhs_loaded, rhs_loaded);
                 Ok(CValue::by_val(result, lhs_val.ty()))
@@ -306,7 +255,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 let val = self.codegen_operand(operand)?;
                 let loaded = val
                     .load(&mut self.builder, self.ptr_type)
-                    .ok_or_else(|| self.error("unary operation on zero-sized type"))?;
+                    .ok_or_else(|| self.error("unop on ZST"))?;
 
                 let result = match op {
                     UnOp::Not => self.builder.ins().bnot(loaded),
@@ -314,11 +263,10 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 };
                 Ok(CValue::by_val(result, val.ty()))
             }
-            _ => Err(CodegenError::unsupported("unsupported rvalue")),
+            _ => Err(Error::Unsupported("unsupported rvalue")),
         }
     }
 
-    /// Generates code for a binary operation.
     fn codegen_binop(&mut self, op: BinOp, lhs: Value, rhs: Value) -> Value {
         match op {
             BinOp::Add => self.builder.ins().iadd(lhs, rhs),
@@ -340,8 +288,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
         }
     }
 
-    /// Generates code for an operand.
-    fn codegen_operand(&mut self, operand: &Operand<'zir>) -> CodegenResult<CValue<'zir>> {
+    fn codegen_operand(&mut self, operand: &Operand<'zir>) -> Result<CValue<'zir>> {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => {
                 let cplace = self.codegen_place(place)?;
@@ -351,12 +298,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
         }
     }
 
-    /// Generates code for a constant.
-    fn codegen_const(
-        &mut self,
-        const_val: &ConstValue,
-        ty: Ty<'zir>,
-    ) -> CodegenResult<CValue<'zir>> {
+    fn codegen_const(&mut self, const_val: &ConstValue, ty: Ty<'zir>) -> Result<CValue<'zir>> {
         match const_val {
             ConstValue::Scalar(scalar) => {
                 let clif_ty = clif_type(ty, self.ptr_type).ok_or_else(|| self.type_error(ty))?;
@@ -364,22 +306,19 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 let value = match scalar.to_u64() {
                     Some(v) => self.builder.ins().iconst(clif_ty, v as i64),
                     None => {
-                        // For larger values, we need to use iconst with i128
                         if let Some(v) = scalar.to_u128() {
                             if clif_ty == types::I128 {
                                 let lo = self.builder.ins().iconst(types::I64, v as i64);
                                 let hi = self.builder.ins().iconst(types::I64, (v >> 64) as i64);
                                 self.builder.ins().iconcat(lo, hi)
                             } else {
-                                return Err(CodegenError::layout_error(
-                                    ty,
-                                    "scalar value too large for type",
+                                return Err(Error::layout(
+                                    TyData::from_kind(&ty),
+                                    "scalar too large",
                                 ));
                             }
                         } else {
-                            return Err(CodegenError::unsupported(
-                                "arbitrary precision integers not yet supported in codegen",
-                            ));
+                            return Err(Error::Unsupported("arbitrary precision not supported"));
                         }
                     }
                 };
@@ -390,8 +329,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
         }
     }
 
-    /// Generates code for a place.
-    fn codegen_place(&mut self, place: &Place<'zir>) -> CodegenResult<CPlace<'zir>> {
+    fn codegen_place(&mut self, place: &Place<'zir>) -> Result<CPlace<'zir>> {
         let mut cplace = self.locals[place.local];
 
         for elem in place.projection.iter() {
@@ -403,11 +341,10 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                     }
                 }
                 zir::mir::PlaceElem::Field(idx) => {
-                    // Get field type - simplified for now
                     cplace = cplace.field(*idx, cplace.ty(), &mut self.builder);
                 }
                 _ => {
-                    return Err(CodegenError::unsupported("unsupported projection element"));
+                    return Err(Error::Unsupported("unsupported projection"));
                 }
             }
         }
@@ -415,8 +352,7 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
         Ok(cplace)
     }
 
-    /// Generates code for a terminator.
-    fn codegen_terminator(&mut self, terminator: &zir::mir::Terminator<'zir>) -> CodegenResult<()> {
+    fn codegen_terminator(&mut self, terminator: &zir::mir::Terminator<'zir>) -> Result<()> {
         match &terminator.kind {
             TerminatorKind::Goto { target } => {
                 let block = self.block_map[*target];
@@ -438,18 +374,16 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                 let val = self.codegen_operand(discr)?;
                 let loaded = val
                     .load(&mut self.builder, self.ptr_type)
-                    .ok_or_else(|| self.error("switch on zero-sized type"))?;
+                    .ok_or_else(|| self.error("switch on ZST"))?;
 
                 let otherwise = self.block_map[targets.otherwise()];
 
                 if targets.values.len() == 1 {
-                    // Simple if-else
                     let then_block = self.block_map[targets.targets[0]];
                     let cmp =
                         self.builder.ins().icmp_imm(IntCC::Equal, loaded, targets.values[0] as i64);
                     self.builder.ins().brif(cmp, then_block, &[], otherwise, &[]);
                 } else {
-                    // Full switch - use jump table
                     let mut switch = Switch::new();
                     for (val, target) in targets.iter() {
                         let block = self.block_map[target];
@@ -458,12 +392,8 @@ impl<'a, 'zir> FunctionCodegen<'a, 'zir> {
                     switch.emit(&mut self.builder, loaded, otherwise);
                 }
             }
-            TerminatorKind::Call { func: _, args: _, dest: _, target: _, fn_span } => {
-                // Function calls not yet implemented - return error with source span
-                return Err(CodegenError::compile_error(
-                    *fn_span,
-                    "function calls not yet implemented",
-                ));
+            TerminatorKind::Call { fn_span, .. } => {
+                return Err(Error::compile(*fn_span, "calls not implemented"));
             }
         }
         Ok(())
