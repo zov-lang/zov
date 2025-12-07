@@ -24,7 +24,6 @@ use zir_codegen::{
 
 pub struct CraneliftBackend {
     ctx: CodegenContext<JITModule>,
-    config: CodegenConfig,
 }
 
 struct CraneliftCodegenResult {
@@ -32,10 +31,10 @@ struct CraneliftCodegenResult {
 }
 
 impl CraneliftBackend {
-    pub fn new(config: CodegenConfig) -> Self {
+    pub fn new() -> Self {
         let module = create_jit_module();
         let ctx = CodegenContext::new(module);
-        Self { ctx, config }
+        Self { ctx }
     }
 
     pub fn context(&self) -> &CodegenContext<JITModule> {
@@ -121,8 +120,8 @@ impl CodegenBackend for CraneliftBackend {
 
     fn link(&self, _sess: &Session, _results: CodegenResults, _outputs: &OutputFilenames) {}
 
-    fn config(&self) -> &CodegenConfig {
-        &self.config
+    fn config(&self) -> CodegenConfig {
+        CodegenConfig::default()
     }
 
     fn compile_function<'zir>(
@@ -210,6 +209,8 @@ pub fn pointer_type(isa: &dyn TargetIsa) -> types::Type {
     isa.pointer_type()
 }
 
-pub fn create_backend(config: CodegenConfig) -> Box<dyn CodegenBackend> {
-    Box::new(CraneliftBackend::new(config))
+impl Default for CraneliftBackend {
+    fn default() -> Self {
+        Self::new()
+    }
 }

@@ -1,6 +1,6 @@
 //! Backend-agnostic testing utilities for code generation.
 
-use crate::{CodegenBackend, CodegenConfig, FunctionSignature, Result, TypeDesc};
+use crate::{CodegenBackend, FunctionSignature, Result, TypeDesc};
 use zir::idx::Idx;
 use zir::intern::InternSet;
 use zir::mir::*;
@@ -202,16 +202,16 @@ pub fn standard_test_cases<'a>(arena: &'a Arena<'a>) -> Vec<CodegenTestCase<'a>>
     ]
 }
 
-pub fn run_standard_tests<F>(factory: F) -> Result<Vec<(&'static str, String)>>
+pub fn run_standard_tests<F>(mut backend_factory: F) -> Result<Vec<(&'static str, String)>>
 where
-    F: Fn(CodegenConfig) -> Box<dyn CodegenBackend>,
+    F: FnMut() -> Box<dyn CodegenBackend>,
 {
     let arena = Arena::new();
     let test_cases = standard_test_cases(&arena);
     let mut results = Vec::new();
 
     for test in &test_cases {
-        let mut backend = factory(CodegenConfig::default());
+        let mut backend = backend_factory();
         let ir = test.run(backend.as_mut())?;
         results.push((test.name, ir));
     }

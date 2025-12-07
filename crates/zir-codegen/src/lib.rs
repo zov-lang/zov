@@ -356,7 +356,7 @@ pub trait CodegenBackend: Any {
     ) -> (CodegenResults, HashMap<WorkProductId, WorkProduct>);
 
     fn link(&self, sess: &Session, results: CodegenResults, outputs: &OutputFilenames);
-    fn config(&self) -> &CodegenConfig;
+    fn config(&self) -> CodegenConfig;
 
     fn compile_function<'zir>(
         &mut self,
@@ -370,9 +370,6 @@ pub trait CodegenBackend: Any {
     ) -> Result<String>;
     fn finalize(self: Box<Self>) -> CodegenResults;
 }
-
-/// Factory function type for creating backends.
-pub type BackendFactory = fn(CodegenConfig) -> Box<dyn CodegenBackend>;
 
 #[cfg(test)]
 mod tests {

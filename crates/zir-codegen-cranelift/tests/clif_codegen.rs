@@ -1,12 +1,13 @@
 //! CLIF codegen tests.
 
 use zir::{Arena, mir};
+use zir_codegen::CodegenBackend;
+use zir_codegen::FunctionSignature;
 use zir_codegen::testing::{
     compile_to_ir_text, create_add_function, create_const_function, create_max_function,
     run_standard_tests, sig_i64_i64_to_i64, sig_void_to_i64,
 };
-use zir_codegen::{CodegenConfig, FunctionSignature};
-use zir_codegen_cranelift::create_backend;
+use zir_codegen_cranelift::CraneliftBackend;
 
 const CALLING_CONVENTIONS: &[&str] =
     &["system_v", "apple_aarch64", "windows_fastcall", "fast", "cold", "tail"];
@@ -21,14 +22,14 @@ fn normalize_calling_convention(clif: &str) -> String {
 }
 
 fn compile_to_clif(body: &mir::Body<'_>, sig: FunctionSignature) -> String {
-    let mut backend = create_backend(CodegenConfig::default());
-    let clif = compile_to_ir_text(backend.as_mut(), body, sig).expect("compile failed");
+    let mut backend = CraneliftBackend::new();
+    let clif = compile_to_ir_text(&mut backend, body, sig).expect("compile failed");
     normalize_calling_convention(&clif)
 }
 
 #[test]
 fn test_backend_name() {
-    let backend = create_backend(CodegenConfig::default());
+    let backend = CraneliftBackend::new();
     assert_eq!(backend.name(), "cranelift");
 }
 
@@ -66,7 +67,8 @@ fn test_clif_max_function() {
 
 #[test]
 fn test_standard_tests_all_pass() {
-    let results = run_standard_tests(create_backend).expect("tests should pass");
+    let results =
+        run_standard_tests(|| Box::new(CraneliftBackend::new())).expect("tests should pass");
     assert_eq!(results.len(), 4);
     for (name, ir) in &results {
         assert!(!ir.is_empty(), "{} produced empty IR", name);
