@@ -4,7 +4,7 @@
 //! in a backend-independent way. Tests written using these utilities can be
 //! run against any backend without modification.
 
-use crate::{CodegenBackend, CodegenConfig, FunctionSignature, TypeDesc};
+use crate::{CodegenBackend, CodegenConfig, CodegenResult, FunctionSignature, TypeDesc};
 use zir::idx::Idx;
 use zir::intern::InternSet;
 use zir::mir::*;
@@ -220,11 +220,15 @@ pub fn sig_i64_i64_to_i64() -> FunctionSignature {
 ///
 /// This function is backend-agnostic - it works with any backend that implements
 /// the [`CodegenBackend`] trait.
+///
+/// # Errors
+///
+/// Returns `CodegenError` if compilation fails.
 pub fn compile_to_ir_text(
     backend: &mut dyn CodegenBackend,
     body: &Body<'_>,
     sig: FunctionSignature,
-) -> String {
+) -> CodegenResult<String> {
     backend.compile_to_ir(body, sig)
 }
 
@@ -250,7 +254,11 @@ impl<'a> CodegenTestCase<'a> {
     /// Runs this test case against a backend.
     ///
     /// Returns the generated IR text.
-    pub fn run(&self, backend: &mut dyn CodegenBackend) -> String {
+    ///
+    /// # Errors
+    ///
+    /// Returns `CodegenError` if compilation fails.
+    pub fn run(&self, backend: &mut dyn CodegenBackend) -> CodegenResult<String> {
         compile_to_ir_text(backend, &self.body, self.signature.clone())
     }
 }
@@ -282,7 +290,11 @@ pub fn standard_test_cases<'a>(arena: &'a Arena<'a>) -> Vec<CodegenTestCase<'a>>
 ///
 /// This function creates a backend using the provided factory and runs
 /// all standard test cases, returning a map of test names to their IR output.
-pub fn run_standard_tests<F>(factory: F) -> Vec<(&'static str, String)>
+///
+/// # Errors
+///
+/// Returns `CodegenError` if any test case fails to compile.
+pub fn run_standard_tests<F>(factory: F) -> CodegenResult<Vec<(&'static str, String)>>
 where
     F: Fn(CodegenConfig) -> Box<dyn CodegenBackend>,
 {
@@ -292,9 +304,9 @@ where
 
     for test in &test_cases {
         let mut backend = factory(CodegenConfig::default());
-        let ir = test.run(backend.as_mut());
+        let ir = test.run(backend.as_mut())?;
         results.push((test.name, ir));
     }
 
-    results
+    Ok(results)
 }

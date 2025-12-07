@@ -43,7 +43,8 @@ fn test_compile_const_function() {
     let body = create_const_function(&arena, 42);
 
     let mut backend = create_backend(CodegenConfig::default());
-    let ir_text = compile_to_ir_text(backend.as_mut(), &body, sig_void_to_i64());
+    let ir_text = compile_to_ir_text(backend.as_mut(), &body, sig_void_to_i64())
+        .expect("compilation should succeed");
 
     assert!(!ir_text.is_empty(), "Generated IR should not be empty");
 }
@@ -55,7 +56,8 @@ fn test_compile_function_with_params() {
     let body = create_add_function(&arena);
 
     let mut backend = create_backend(CodegenConfig::default());
-    let ir_text = compile_to_ir_text(backend.as_mut(), &body, sig_i64_i64_to_i64());
+    let ir_text = compile_to_ir_text(backend.as_mut(), &body, sig_i64_i64_to_i64())
+        .expect("compilation should succeed");
 
     assert!(!ir_text.is_empty(), "Generated IR should not be empty");
 }
@@ -67,7 +69,8 @@ fn test_compile_function_with_control_flow() {
     let body = create_max_function(&arena);
 
     let mut backend = create_backend(CodegenConfig::default());
-    let ir_text = compile_to_ir_text(backend.as_mut(), &body, sig_i64_i64_to_i64());
+    let ir_text = compile_to_ir_text(backend.as_mut(), &body, sig_i64_i64_to_i64())
+        .expect("compilation should succeed");
 
     assert!(!ir_text.is_empty(), "Generated IR should not be empty");
 }
@@ -80,7 +83,7 @@ fn test_codegen_test_case() {
         CodegenTestCase::new("test_const", create_const_function(&arena, 100), sig_void_to_i64());
 
     let mut backend = create_backend(CodegenConfig::default());
-    let ir = test_case.run(backend.as_mut());
+    let ir = test_case.run(backend.as_mut()).expect("test case should pass");
 
     assert!(!ir.is_empty(), "Test case should produce non-empty IR");
 }
@@ -105,7 +108,7 @@ fn test_standard_test_cases() {
 /// Test running all standard tests through the factory.
 #[test]
 fn test_run_standard_tests() {
-    let results = run_standard_tests(create_backend);
+    let results = run_standard_tests(create_backend).expect("standard tests should pass");
 
     assert_eq!(results.len(), 4, "Should have 4 test results");
 
@@ -124,8 +127,10 @@ fn test_multiple_backend_instances() {
     let mut backend1 = create_backend(CodegenConfig::default());
     let mut backend2 = create_backend(CodegenConfig::default());
 
-    let ir1 = compile_to_ir_text(backend1.as_mut(), &body, sig_void_to_i64());
-    let ir2 = compile_to_ir_text(backend2.as_mut(), &body, sig_void_to_i64());
+    let ir1 = compile_to_ir_text(backend1.as_mut(), &body, sig_void_to_i64())
+        .expect("compilation should succeed");
+    let ir2 = compile_to_ir_text(backend2.as_mut(), &body, sig_void_to_i64())
+        .expect("compilation should succeed");
 
     // Both should produce the same output for the same input
     assert_eq!(ir1, ir2, "Same input should produce same output");

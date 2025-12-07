@@ -22,8 +22,9 @@ use cranelift_module::Module;
 use zir::mir::Body;
 use zir::ty::{IntWidth, Ty, TyKind};
 use zir_codegen::{
-    CodegenBackend, CodegenConfig, CodegenResults, CodegenUnit, FunctionSignature, OngoingCodegen,
-    OutputFilenames, Session, TargetConfig, TypeDesc, WorkProduct, WorkProductId,
+    CodegenBackend, CodegenConfig, CodegenResult, CodegenResults, CodegenUnit, CompiledModule,
+    FunctionSignature, OngoingCodegen, OutputFilenames, Session, TargetConfig, TypeDesc,
+    WorkProduct, WorkProductId,
 };
 
 /// Cranelift-based code generation backend.
@@ -39,9 +40,8 @@ pub struct CraneliftBackend {
 
 /// Internal result from codegen_unit for joining later.
 struct CraneliftCodegenResult {
-    /// Compiled IR text for each function.
-    #[allow(dead_code)]
-    ir_outputs: Vec<String>,
+    /// Compiled modules with their IR text.
+    modules: Vec<CompiledModule>,
 }
 
 impl CraneliftBackend {
@@ -122,17 +122,20 @@ impl CodegenBackend for CraneliftBackend {
         writeln!(out, "  pointer type: {}", self.ctx.ptr_type).unwrap();
     }
 
-    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> OngoingCodegen {
-        let mut ir_outputs = Vec::new();
+    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> CodegenResult<OngoingCodegen> {
+        let mut modules = Vec::new();
 
-        for (body, signature) in &unit.bodies {
+        for (idx, (body, signature)) in unit.bodies.iter().enumerate() {
             let clif_sig = self.convert_signature(signature);
-            let clif_text =
-                self.ctx.compile_to_clif(body, clif_sig).expect("failed to compile to CLIF");
-            ir_outputs.push(clif_text);
+            let clif_text = self.ctx.compile_to_clif(body, clif_sig)?;
+
+            // Create a compiled module with IR text for in-memory testing
+            let module_name = format!("{}_{}", unit.name, idx);
+            let module = CompiledModule::with_ir_text(module_name, clif_text);
+            modules.push(module);
         }
 
-        Box::new(CraneliftCodegenResult { ir_outputs })
+        Ok(Box::new(CraneliftCodegenResult { modules }))
     }
 
     fn join_codegen(
@@ -142,12 +145,14 @@ impl CodegenBackend for CraneliftBackend {
         _outputs: &OutputFilenames,
     ) -> (CodegenResults, HashMap<WorkProductId, WorkProduct>) {
         // Downcast the ongoing codegen to our internal type
-        let _result = ongoing
+        let result = ongoing
             .downcast::<CraneliftCodegenResult>()
             .expect("invalid ongoing codegen type - expected CraneliftCodegenResult");
 
-        // For JIT, we don't produce object files
-        (CodegenResults::default(), HashMap::new())
+        // Return the compiled modules with their IR text
+        let results = CodegenResults { modules: result.modules, linker_args: Vec::new() };
+
+        (results, HashMap::new())
     }
 
     fn link(&self, _sess: &Session, _results: CodegenResults, _outputs: &OutputFilenames) {
@@ -159,18 +164,24 @@ impl CodegenBackend for CraneliftBackend {
         &self.config
     }
 
-    fn compile_function<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature) {
+    fn compile_function<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: FunctionSignature,
+    ) -> CodegenResult<()> {
         let clif_sig = self.convert_signature(&signature);
-        let func_id = self
-            .ctx
-            .declare_function("_anon", clif_sig.clone())
-            .expect("failed to declare function");
-        self.ctx.define_function(func_id, body, clif_sig).expect("failed to define function");
+        let func_id = self.ctx.declare_function("_anon", clif_sig.clone())?;
+        self.ctx.define_function(func_id, body, clif_sig)?;
+        Ok(())
     }
 
-    fn compile_to_ir<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature) -> String {
+    fn compile_to_ir<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: FunctionSignature,
+    ) -> CodegenResult<String> {
         let clif_sig = self.convert_signature(&signature);
-        self.ctx.compile_to_clif(body, clif_sig).expect("failed to compile to CLIF")
+        self.ctx.compile_to_clif(body, clif_sig)
     }
 
     fn finalize(self: Box<Self>) -> CodegenResults {

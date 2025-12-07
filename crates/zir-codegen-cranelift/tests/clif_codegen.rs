@@ -15,7 +15,7 @@ use zir_codegen_cranelift::create_backend;
 /// Helper to compile MIR to CLIF using the backend factory.
 fn compile_to_clif(body: &mir::Body<'_>, sig: FunctionSignature) -> String {
     let mut backend = create_backend(CodegenConfig::default());
-    compile_to_ir_text(backend.as_mut(), body, sig)
+    compile_to_ir_text(backend.as_mut(), body, sig).expect("failed to compile to CLIF")
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn test_clif_max_function() {
 #[test]
 fn test_standard_tests_all_pass() {
     // Run all standard tests using the backend factory
-    let results = run_standard_tests(create_backend);
+    let results = run_standard_tests(create_backend).expect("standard tests should pass");
 
     // Verify we got all expected tests
     assert_eq!(results.len(), 4);

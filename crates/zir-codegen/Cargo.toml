@@ -8,6 +8,7 @@ description = "Backend-agnostic code generation traits for ZIR"
 [dependencies]
 zir = { path = "../zir" }
 target-lexicon = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

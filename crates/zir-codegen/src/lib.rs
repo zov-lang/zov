@@ -12,10 +12,128 @@ pub mod testing;
 use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
 use std::io::Write;
 use std::path::PathBuf;
 
-use zir::mir::Body;
+use thiserror::Error;
+use zir::mir::{Body, Span};
+use zir::ty::TyKind;
+
+// ============================================================================
+// Error Handling
+// ============================================================================
+
+/// Errors that can occur during code generation.
+///
+/// This enum represents structured errors that can happen during the
+/// compilation process, allowing for proper error handling and reporting
+/// instead of panicking.
+#[derive(Debug, Error)]
+pub enum CodegenError {
+    /// Error related to type layout computation.
+    ///
+    /// This occurs when the codegen cannot determine how to lay out a type
+    /// in memory (e.g., unsupported bit widths, invalid struct layouts).
+    #[error("layout error for type `{ty}`: {message}")]
+    LayoutError {
+        /// String representation of the type that caused the error.
+        ty: String,
+        /// Detailed error message.
+        message: String,
+    },
+
+    /// A type is not supported by the backend.
+    ///
+    /// This occurs when encountering types that the backend cannot handle,
+    /// such as arbitrary-precision integers beyond supported widths.
+    #[error("type not supported: `{ty}`")]
+    TypeNotSupported {
+        /// String representation of the unsupported type.
+        ty: String,
+    },
+
+    /// Internal codegen error.
+    ///
+    /// This represents unexpected internal errors that indicate bugs in the
+    /// code generator rather than user errors.
+    #[error("internal codegen error: {message}")]
+    InternalError {
+        /// Detailed error message.
+        message: String,
+    },
+
+    /// Compilation error tied to a source location.
+    ///
+    /// This represents errors that can be traced back to specific source code,
+    /// allowing for precise error reporting to users.
+    #[error("compile error at {span:?}: {message}")]
+    CompileError {
+        /// Source span where the error occurred.
+        span: Span,
+        /// Error message.
+        message: String,
+    },
+
+    /// Unsupported language feature.
+    ///
+    /// This occurs when the code uses a feature that the backend does not
+    /// yet implement.
+    #[error("unsupported feature: {feature}")]
+    UnsupportedFeature {
+        /// Description of the unsupported feature.
+        feature: String,
+    },
+
+    /// Module-level error from the backend.
+    ///
+    /// This wraps backend-specific module errors (e.g., Cranelift's ModuleError).
+    #[error("module error: {message}")]
+    ModuleError {
+        /// Error message from the backend.
+        message: String,
+    },
+}
+
+impl CodegenError {
+    /// Creates a layout error for a type.
+    pub fn layout_error(ty: impl fmt::Debug, message: impl Into<String>) -> Self {
+        CodegenError::LayoutError { ty: format!("{:?}", ty), message: message.into() }
+    }
+
+    /// Creates a type not supported error.
+    pub fn type_not_supported(ty: impl fmt::Debug) -> Self {
+        CodegenError::TypeNotSupported { ty: format!("{:?}", ty) }
+    }
+
+    /// Creates an internal error.
+    pub fn internal(message: impl Into<String>) -> Self {
+        CodegenError::InternalError { message: message.into() }
+    }
+
+    /// Creates a compile error at a specific span.
+    pub fn compile_error(span: Span, message: impl Into<String>) -> Self {
+        CodegenError::CompileError { span, message: message.into() }
+    }
+
+    /// Creates an unsupported feature error.
+    pub fn unsupported(feature: impl Into<String>) -> Self {
+        CodegenError::UnsupportedFeature { feature: feature.into() }
+    }
+
+    /// Creates a module error.
+    pub fn module_error(message: impl Into<String>) -> Self {
+        CodegenError::ModuleError { message: message.into() }
+    }
+
+    /// Creates a type not supported error from a TyKind.
+    pub fn type_not_supported_kind(ty: &TyKind<'_>) -> Self {
+        CodegenError::TypeNotSupported { ty: format!("{:?}", ty) }
+    }
+}
+
+/// Result type for codegen operations.
+pub type CodegenResult<T> = Result<T, CodegenError>;
 
 // ============================================================================
 // Target Specification
@@ -217,12 +335,36 @@ pub struct CompiledModule {
     pub assembly_path: Option<PathBuf>,
     /// Path to the IR file, if emitted.
     pub ir_path: Option<PathBuf>,
+    /// IR text representation for in-memory testing and assertions.
+    ///
+    /// This contains the textual IR (e.g., CLIF for Cranelift) that can be
+    /// used for snapshot testing without executing the generated code.
+    pub ir_text: Option<String>,
 }
 
 impl CompiledModule {
     /// Creates a new compiled module.
     pub fn new(name: String) -> Self {
-        Self { name, object_path: None, object_code: None, assembly_path: None, ir_path: None }
+        Self {
+            name,
+            object_path: None,
+            object_code: None,
+            assembly_path: None,
+            ir_path: None,
+            ir_text: None,
+        }
+    }
+
+    /// Creates a new compiled module with IR text.
+    pub fn with_ir_text(name: String, ir_text: String) -> Self {
+        Self {
+            name,
+            object_path: None,
+            object_code: None,
+            assembly_path: None,
+            ir_path: None,
+            ir_text: Some(ir_text),
+        }
     }
 }
 
@@ -347,6 +489,9 @@ impl FunctionSignature {
 /// 3. `codegen_unit()` - Compile a unit of code
 /// 4. `join_codegen()` - Collect parallel codegen results
 /// 5. `link()` - Link the final output
+///
+/// All methods that can fail return `Result<_, CodegenError>` to enable
+/// proper error handling and stop-compilation semantics.
 pub trait CodegenBackend: Any {
     /// Returns the name of this backend (e.g., "cranelift", "llvm").
     fn name(&self) -> &'static str;
@@ -390,7 +535,12 @@ pub trait CodegenBackend: Any {
     /// This method takes a collection of MIR bodies and compiles them
     /// into backend-specific IR. The result is an opaque `OngoingCodegen`
     /// that can later be passed to `join_codegen()`.
-    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> OngoingCodegen;
+    ///
+    /// # Errors
+    ///
+    /// Returns `CodegenError` if any function in the unit fails to compile.
+    /// Compilation stops immediately on the first error (stop-compilation semantics).
+    fn codegen_unit<'a>(&mut self, unit: CodegenUnit<'a>) -> CodegenResult<OngoingCodegen>;
 
     /// Joins ongoing codegen and produces final results.
     ///
@@ -420,14 +570,30 @@ pub trait CodegenBackend: Any {
     ///
     /// This is a convenience method for simple use cases where you just
     /// want to compile a single function without the full codegen_unit pipeline.
-    fn compile_function<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature);
+    ///
+    /// # Errors
+    ///
+    /// Returns `CodegenError` if compilation fails.
+    fn compile_function<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: FunctionSignature,
+    ) -> CodegenResult<()>;
 
     /// Compiles a MIR function and returns the IR representation as text.
     ///
     /// This method is useful for testing the code generation output
     /// without actually executing the generated code. The returned
     /// IR can be compared against expected snapshots.
-    fn compile_to_ir<'zir>(&mut self, body: &Body<'zir>, signature: FunctionSignature) -> String;
+    ///
+    /// # Errors
+    ///
+    /// Returns `CodegenError` if compilation fails.
+    fn compile_to_ir<'zir>(
+        &mut self,
+        body: &Body<'zir>,
+        signature: FunctionSignature,
+    ) -> CodegenResult<String>;
 
     /// Finalizes the compilation and returns the results.
     ///
