@@ -7,7 +7,7 @@
 use zir::{Arena, mir};
 use zir_codegen::testing::{
     compile_to_ir_text, create_add_function, create_const_function, create_max_function,
-    run_standard_tests, sig_i64_i64_to_i64, sig_void_to_i64,
+    run_standard_tests, sig_i64_i64_to_i64, sig_void_to_i64, IrChecker,
 };
 use zir_codegen::{CodegenConfig, FunctionSignature};
 use zir_codegen_cranelift::create_backend;
@@ -16,6 +16,17 @@ use zir_codegen_cranelift::create_backend;
 fn compile_to_clif(body: &mir::Body<'_>, sig: FunctionSignature) -> String {
     let mut backend = create_backend(CodegenConfig::default());
     compile_to_ir_text(backend.as_mut(), body, sig)
+}
+
+/// Normalizes CLIF output to be platform-independent for snapshot testing.
+/// Replaces calling convention names with a placeholder.
+fn normalize_clif(clif: &str) -> String {
+    // Replace platform-specific calling conventions with a generic placeholder
+    let normalized = clif
+        .replace("system_v", "[CALLING_CONVENTION]")
+        .replace("apple_aarch64", "[CALLING_CONVENTION]")
+        .replace("windows_fastcall", "[CALLING_CONVENTION]");
+    normalized
 }
 
 #[test]
@@ -29,7 +40,16 @@ fn test_clif_const_42() {
     let arena = Arena::new();
     let body = create_const_function(&arena, 42);
     let clif = compile_to_clif(&body, sig_void_to_i64());
-    insta::assert_snapshot!(clif);
+
+    // Platform-independent verification using IrChecker
+    IrChecker::new(&clif)
+        .check("function")
+        .check("42")  // The constant value
+        .check("return")
+        .verify();
+
+    // Snapshot with normalized output for platform-independent comparison
+    insta::assert_snapshot!(normalize_clif(&clif));
 }
 
 #[test]
@@ -37,7 +57,15 @@ fn test_clif_const_negative() {
     let arena = Arena::new();
     let body = create_const_function(&arena, -123);
     let clif = compile_to_clif(&body, sig_void_to_i64());
-    insta::assert_snapshot!(clif);
+
+    // Platform-independent verification
+    IrChecker::new(&clif)
+        .check("function")
+        .check("-123")  // The constant value
+        .check("return")
+        .verify();
+
+    insta::assert_snapshot!(normalize_clif(&clif));
 }
 
 #[test]
@@ -45,7 +73,15 @@ fn test_clif_add_function() {
     let arena = Arena::new();
     let body = create_add_function(&arena);
     let clif = compile_to_clif(&body, sig_i64_i64_to_i64());
-    insta::assert_snapshot!(clif);
+
+    // Platform-independent verification
+    IrChecker::new(&clif)
+        .check("function")
+        .check("iadd")  // The add instruction
+        .check("return")
+        .verify();
+
+    insta::assert_snapshot!(normalize_clif(&clif));
 }
 
 #[test]
@@ -53,7 +89,15 @@ fn test_clif_max_function() {
     let arena = Arena::new();
     let body = create_max_function(&arena);
     let clif = compile_to_clif(&body, sig_i64_i64_to_i64());
-    insta::assert_snapshot!(clif);
+
+    // Platform-independent verification
+    IrChecker::new(&clif)
+        .check("function")
+        .check("icmp")  // Comparison for branching
+        .check("return")
+        .verify();
+
+    insta::assert_snapshot!(normalize_clif(&clif));
 }
 
 #[test]
