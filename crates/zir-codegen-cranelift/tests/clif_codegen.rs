@@ -22,11 +22,9 @@ fn compile_to_clif(body: &mir::Body<'_>, sig: FunctionSignature) -> String {
 /// Replaces calling convention names with a placeholder.
 fn normalize_clif(clif: &str) -> String {
     // Replace platform-specific calling conventions with a generic placeholder
-    let normalized = clif
-        .replace("system_v", "[CALLING_CONVENTION]")
+    clif.replace("system_v", "[CALLING_CONVENTION]")
         .replace("apple_aarch64", "[CALLING_CONVENTION]")
-        .replace("windows_fastcall", "[CALLING_CONVENTION]");
-    normalized
+        .replace("windows_fastcall", "[CALLING_CONVENTION]")
 }
 
 #[test]
