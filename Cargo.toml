@@ -32,6 +32,9 @@ bitflags = "2.6"
 parking_lot = "0.12"
 target-lexicon = "0.12"
 
+# Error handling
+thiserror = "2.0"
+
 # Testing
 insta = { version = "1.42", features = ["glob"] }
 

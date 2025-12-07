@@ -1,10 +1,6 @@
 //! Backend-agnostic testing utilities for code generation.
-//!
-//! This module provides utilities for testing [`CodegenBackend`] implementations
-//! in a backend-independent way. Tests written using these utilities can be
-//! run against any backend without modification.
 
-use crate::{CodegenBackend, CodegenConfig, FunctionSignature, TypeDesc};
+use crate::{CodegenBackend, FunctionSignature, Result, TypeDesc};
 use zir::idx::Idx;
 use zir::intern::InternSet;
 use zir::mir::*;
@@ -12,17 +8,6 @@ use zir::ty::*;
 use zir::{Arena, IndexVec};
 
 /// Creates a simple function that returns a constant i64 value.
-///
-/// # MIR Structure
-/// ```text
-/// fn const_fn() -> i64 {
-///     let _0: i64;
-///     bb0: {
-///         _0 = <value>;
-///         return;
-///     }
-/// }
-/// ```
 pub fn create_const_function<'a>(arena: &'a Arena<'a>, value: i64) -> Body<'a> {
     let types = InternSet::new();
     let i64_ty = types.intern(TyKind::Int(IntWidth::I64), |k| arena.dropless.alloc(k));
@@ -53,17 +38,6 @@ pub fn create_const_function<'a>(arena: &'a Arena<'a>, value: i64) -> Body<'a> {
 }
 
 /// Creates an add function: `fn add(a: i64, b: i64) -> i64 { a + b }`
-///
-/// # MIR Structure
-/// ```text
-/// fn add(_1: i64, _2: i64) -> i64 {
-///     let _0: i64;
-///     bb0: {
-///         _0 = Add(_1, _2);
-///         return;
-///     }
-/// }
-/// ```
 pub fn create_add_function<'a>(arena: &'a Arena<'a>) -> Body<'a> {
     let types = InternSet::new();
     let i64_ty = types.intern(TyKind::Int(IntWidth::I64), |k| arena.dropless.alloc(k));
@@ -100,29 +74,6 @@ pub fn create_add_function<'a>(arena: &'a Arena<'a>) -> Body<'a> {
 }
 
 /// Creates a max function with branching: `fn max(a: i64, b: i64) -> i64`
-///
-/// # MIR Structure
-/// ```text
-/// fn max(_1: i64, _2: i64) -> i64 {
-///     let _0: i64;
-///     let _3: bool;
-///     bb0: {
-///         _3 = Gt(_1, _2);
-///         switchInt(_3) -> [0: bb2, otherwise: bb1];
-///     }
-///     bb1: {
-///         _0 = _1;
-///         goto -> bb3;
-///     }
-///     bb2: {
-///         _0 = _2;
-///         goto -> bb3;
-///     }
-///     bb3: {
-///         return;
-///     }
-/// }
-/// ```
 pub fn create_max_function<'a>(arena: &'a Arena<'a>) -> Body<'a> {
     let types = InternSet::new();
     let i64_ty = types.intern(TyKind::Int(IntWidth::I64), |k| arena.dropless.alloc(k));
@@ -203,12 +154,10 @@ pub fn create_max_function<'a>(arena: &'a Arena<'a>) -> Body<'a> {
     body
 }
 
-/// Signature for a function returning i64.
 pub fn sig_void_to_i64() -> FunctionSignature {
     FunctionSignature::new().with_return(TypeDesc::Int(64))
 }
 
-/// Signature for a function taking two i64 and returning i64.
 pub fn sig_i64_i64_to_i64() -> FunctionSignature {
     FunctionSignature::new()
         .with_param(TypeDesc::Int(64))
@@ -216,55 +165,30 @@ pub fn sig_i64_i64_to_i64() -> FunctionSignature {
         .with_return(TypeDesc::Int(64))
 }
 
-/// Compiles a MIR body to IR using any backend implementing [`CodegenBackend`].
-///
-/// This function is backend-agnostic - it works with any backend that implements
-/// the [`CodegenBackend`] trait.
 pub fn compile_to_ir_text(
     backend: &mut dyn CodegenBackend,
     body: &Body<'_>,
     sig: FunctionSignature,
-) -> String {
+) -> Result<String> {
     backend.compile_to_ir(body, sig)
 }
 
-/// A test case for backend-agnostic codegen testing.
-///
-/// This struct encapsulates a test case that can be run against any
-/// [`CodegenBackend`] implementation.
 pub struct CodegenTestCase<'a> {
-    /// Name of the test case.
     pub name: &'static str,
-    /// The MIR body to compile.
     pub body: Body<'a>,
-    /// The function signature.
     pub signature: FunctionSignature,
 }
 
 impl<'a> CodegenTestCase<'a> {
-    /// Creates a new test case.
     pub fn new(name: &'static str, body: Body<'a>, signature: FunctionSignature) -> Self {
         Self { name, body, signature }
     }
 
-    /// Runs this test case against a backend.
-    ///
-    /// Returns the generated IR text.
-    pub fn run(&self, backend: &mut dyn CodegenBackend) -> String {
+    pub fn run(&self, backend: &mut dyn CodegenBackend) -> Result<String> {
         compile_to_ir_text(backend, &self.body, self.signature.clone())
     }
 }
 
-/// Creates the standard set of test cases for codegen verification.
-///
-/// This returns a vector of test case builders that can be used with any
-/// backend implementing [`CodegenBackend`].
-///
-/// The test cases cover:
-/// - Constant value generation
-/// - Negative constant handling
-/// - Binary operations (add)
-/// - Control flow (branching)
 pub fn standard_test_cases<'a>(arena: &'a Arena<'a>) -> Vec<CodegenTestCase<'a>> {
     vec![
         CodegenTestCase::new("const_42", create_const_function(arena, 42), sig_void_to_i64()),
@@ -278,23 +202,19 @@ pub fn standard_test_cases<'a>(arena: &'a Arena<'a>) -> Vec<CodegenTestCase<'a>>
     ]
 }
 
-/// Runs all standard test cases against a backend factory.
-///
-/// This function creates a backend using the provided factory and runs
-/// all standard test cases, returning a map of test names to their IR output.
-pub fn run_standard_tests<F>(factory: F) -> Vec<(&'static str, String)>
+pub fn run_standard_tests<F>(mut backend_factory: F) -> Result<Vec<(&'static str, String)>>
 where
-    F: Fn(CodegenConfig) -> Box<dyn CodegenBackend>,
+    F: FnMut() -> Box<dyn CodegenBackend>,
 {
     let arena = Arena::new();
     let test_cases = standard_test_cases(&arena);
     let mut results = Vec::new();
 
     for test in &test_cases {
-        let mut backend = factory(CodegenConfig::default());
-        let ir = test.run(backend.as_mut());
+        let mut backend = backend_factory();
+        let ir = test.run(backend.as_mut())?;
         results.push((test.name, ir));
     }
 
-    results
+    Ok(results)
 }
