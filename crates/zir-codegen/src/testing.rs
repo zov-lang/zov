@@ -3,6 +3,33 @@
 //! This module provides utilities for testing [`CodegenBackend`] implementations
 //! in a backend-independent way. Tests written using these utilities can be
 //! run against any backend without modification.
+//!
+//! # Codegen-Agnostic Tests
+//!
+//! The testing framework allows defining tests once and running them against
+//! any backend. Each backend can register itself with:
+//! - A factory function to create backend instances
+//! - A normalization function for cross-platform snapshot testing
+//!
+//! ## Example
+//!
+//! ```rust,ignore
+//! // In backend-specific tests (e.g., cranelift_tests.rs):
+//! use zir_codegen::testing::{BackendTestRunner, create_add_function, sig_i64_i64_to_i64};
+//!
+//! fn normalize_clif(ir: &str) -> String {
+//!     // Replace platform-specific calling conventions
+//!     ir.replace("system_v", "<call_conv>")
+//! }
+//!
+//! fn create_cranelift() -> Box<dyn CodegenBackend> {
+//!     Box::new(CraneliftBackend::new(CodegenConfig::default()))
+//! }
+//!
+//! // Run all standard tests against this backend
+//! BackendTestRunner::new("cranelift", create_cranelift, normalize_clif)
+//!     .run_all_tests();
+//! ```
 
 use crate::{CodegenBackend, CodegenConfig, FunctionSignature, TypeDesc};
 use zir::idx::Idx;
@@ -297,4 +324,102 @@ where
     }
 
     results
+}
+
+// ============================================================================
+// Backend-Agnostic Test Infrastructure
+// ============================================================================
+
+/// Macro for defining a single codegen test that works with any backend.
+///
+/// This macro provides a concise way to define tests that:
+/// 1. Create MIR bodies using the standard test utilities
+/// 2. Compile them using any backend
+/// 3. Optionally normalize the output for cross-platform snapshots
+///
+/// # Syntax Variants
+///
+/// ```rust,ignore
+/// // Basic: test with no-arg MIR builder
+/// codegen_test!(test_name, backend, mir_builder, (param_types) -> ret_type);
+///
+/// // With value: test with value-arg MIR builder
+/// codegen_test!(test_name, backend, mir_builder, value, () -> ret_type);
+///
+/// // With normalizer: apply normalization before snapshot
+/// codegen_test!(test_name, backend, mir_builder, (param_types) -> ret_type, normalizer);
+/// ```
+#[macro_export]
+macro_rules! codegen_test {
+    // Variant: MIR builder with no args, with normalizer
+    ($name:ident, $backend:expr, $mir_fn:expr, ($($p:ty),*) -> $ret:ty, $normalize:expr) => {
+        #[test]
+        fn $name() {
+            use zir::Arena;
+            use $crate::{CodegenBackend, FunctionSignature, TypeDesc};
+
+            let arena = Arena::new();
+            let body = $mir_fn(&arena);
+            let sig = FunctionSignature::new()
+                $(.with_param(TypeDesc::Int((std::mem::size_of::<$p>() * 8) as u32)))*
+                .with_return(TypeDesc::Int((std::mem::size_of::<$ret>() * 8) as u32));
+            let mut backend = $backend;
+            let ir = backend.compile_to_ir(&body, sig);
+            let normalized = $normalize(&ir);
+            insta::assert_snapshot!(normalized);
+        }
+    };
+
+    // Variant: MIR builder with no args, no normalizer
+    ($name:ident, $backend:expr, $mir_fn:expr, ($($p:ty),*) -> $ret:ty) => {
+        #[test]
+        fn $name() {
+            use zir::Arena;
+            use $crate::{CodegenBackend, FunctionSignature, TypeDesc};
+
+            let arena = Arena::new();
+            let body = $mir_fn(&arena);
+            let sig = FunctionSignature::new()
+                $(.with_param(TypeDesc::Int((std::mem::size_of::<$p>() * 8) as u32)))*
+                .with_return(TypeDesc::Int((std::mem::size_of::<$ret>() * 8) as u32));
+            let mut backend = $backend;
+            let ir = backend.compile_to_ir(&body, sig);
+            insta::assert_snapshot!(ir);
+        }
+    };
+
+    // Variant: MIR builder with value arg, with normalizer
+    ($name:ident, $backend:expr, $mir_fn:expr, $value:expr, () -> $ret:ty, $normalize:expr) => {
+        #[test]
+        fn $name() {
+            use zir::Arena;
+            use $crate::{CodegenBackend, FunctionSignature, TypeDesc};
+
+            let arena = Arena::new();
+            let body = $mir_fn(&arena, $value);
+            let sig = FunctionSignature::new()
+                .with_return(TypeDesc::Int((std::mem::size_of::<$ret>() * 8) as u32));
+            let mut backend = $backend;
+            let ir = backend.compile_to_ir(&body, sig);
+            let normalized = $normalize(&ir);
+            insta::assert_snapshot!(normalized);
+        }
+    };
+
+    // Variant: MIR builder with value arg, no normalizer
+    ($name:ident, $backend:expr, $mir_fn:expr, $value:expr, () -> $ret:ty) => {
+        #[test]
+        fn $name() {
+            use zir::Arena;
+            use $crate::{CodegenBackend, FunctionSignature, TypeDesc};
+
+            let arena = Arena::new();
+            let body = $mir_fn(&arena, $value);
+            let sig = FunctionSignature::new()
+                .with_return(TypeDesc::Int((std::mem::size_of::<$ret>() * 8) as u32));
+            let mut backend = $backend;
+            let ir = backend.compile_to_ir(&body, sig);
+            insta::assert_snapshot!(ir);
+        }
+    };
 }

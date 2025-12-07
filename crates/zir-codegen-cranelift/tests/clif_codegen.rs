@@ -1,11 +1,13 @@
-//! CLIF codegen tests for zir-codegen-cranelift
+//! Cranelift codegen tests using backend-agnostic test infrastructure.
+//!
+//! These tests demonstrate how to use the `codegen_test!` macro to define
+//! tests that work with any backend. Each backend provides:
+//! - A way to create backend instances
+//! - A normalization function for cross-platform snapshots
 
-use zir::Arena;
-use zir_codegen::testing::{
-    create_add_function, create_const_function, create_max_function, run_standard_tests,
-};
-use zir_codegen::{CodegenBackend, CodegenConfig, FunctionSignature, TypeDesc};
-use zir_codegen_cranelift::{CraneliftBackend, create_backend};
+use zir_codegen::testing::{create_add_function, create_const_function, create_max_function};
+use zir_codegen::{CodegenBackend, CodegenConfig, codegen_test};
+use zir_codegen_cranelift::CraneliftBackend;
 
 /// Normalizes calling conventions in CLIF output for cross-platform snapshot testing.
 fn normalize_clif(clif: &str) -> String {
@@ -19,55 +21,18 @@ fn normalize_clif(clif: &str) -> String {
     result
 }
 
-/// Macro for declarative codegen tests with inline signature specification.
-macro_rules! clif_test {
-    // Variant: mir builder with no arguments
-    ($name:ident, $mir_fn:expr, () -> $ret:ty) => {
-        #[test]
-        fn $name() {
-            let arena = Arena::new();
-            let body = $mir_fn(&arena);
-            let sig = FunctionSignature::new()
-                .with_return(TypeDesc::Int((std::mem::size_of::<$ret>() * 8) as u32));
-            let mut backend = CraneliftBackend::new(CodegenConfig::default());
-            let clif = backend.compile_to_ir(&body, sig);
-            insta::assert_snapshot!(normalize_clif(&clif));
-        }
-    };
-    // Variant: mir builder with value argument
-    ($name:ident, $mir_fn:expr, $value:expr, () -> $ret:ty) => {
-        #[test]
-        fn $name() {
-            let arena = Arena::new();
-            let body = $mir_fn(&arena, $value);
-            let sig = FunctionSignature::new()
-                .with_return(TypeDesc::Int((std::mem::size_of::<$ret>() * 8) as u32));
-            let mut backend = CraneliftBackend::new(CodegenConfig::default());
-            let clif = backend.compile_to_ir(&body, sig);
-            insta::assert_snapshot!(normalize_clif(&clif));
-        }
-    };
-    // Variant: mir builder with two params and return
-    ($name:ident, $mir_fn:expr, ($p1:ty, $p2:ty) -> $ret:ty) => {
-        #[test]
-        fn $name() {
-            let arena = Arena::new();
-            let body = $mir_fn(&arena);
-            let sig = FunctionSignature::new()
-                .with_param(TypeDesc::Int((std::mem::size_of::<$p1>() * 8) as u32))
-                .with_param(TypeDesc::Int((std::mem::size_of::<$p2>() * 8) as u32))
-                .with_return(TypeDesc::Int((std::mem::size_of::<$ret>() * 8) as u32));
-            let mut backend = CraneliftBackend::new(CodegenConfig::default());
-            let clif = backend.compile_to_ir(&body, sig);
-            insta::assert_snapshot!(normalize_clif(&clif));
-        }
-    };
+/// Creates a fresh Cranelift backend for testing.
+fn clif_backend() -> CraneliftBackend {
+    CraneliftBackend::new(CodegenConfig::default())
 }
 
-clif_test!(test_clif_const_42, create_const_function, 42, () -> i64);
-clif_test!(test_clif_const_negative, create_const_function, -123, () -> i64);
-clif_test!(test_clif_add_function, create_add_function, (i64, i64) -> i64);
-clif_test!(test_clif_max_function, create_max_function, (i64, i64) -> i64);
+// Backend-agnostic tests using the codegen_test! macro.
+// These tests are defined once and can be replicated for any backend.
+
+codegen_test!(clif_const_42, clif_backend(), create_const_function, 42, () -> i64, normalize_clif);
+codegen_test!(clif_const_negative, clif_backend(), create_const_function, -123, () -> i64, normalize_clif);
+codegen_test!(clif_add_function, clif_backend(), create_add_function, (i64, i64) -> i64, normalize_clif);
+codegen_test!(clif_max_function, clif_backend(), create_max_function, (i64, i64) -> i64, normalize_clif);
 
 #[test]
 fn test_backend_name() {
@@ -81,14 +46,4 @@ fn test_backend_config() {
     let backend = CraneliftBackend::new(config);
     assert!(backend.config().optimize);
     assert!(backend.config().debug_info);
-}
-
-#[test]
-fn test_standard_tests_via_factory() {
-    let results = run_standard_tests(create_backend);
-    assert_eq!(results.len(), 4);
-    for (name, ir) in &results {
-        assert!(!ir.is_empty(), "Test '{}' produced empty IR", name);
-        assert!(ir.contains("function"), "Test '{}' should contain 'function'", name);
-    }
 }
