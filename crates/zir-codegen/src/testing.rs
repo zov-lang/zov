@@ -3,6 +3,30 @@
 //! This module provides utilities for testing [`CodegenBackend`] implementations
 //! in a backend-independent way. Tests written using these utilities can be
 //! run against any backend without modification.
+//!
+//! # Test Declaration
+//!
+//! The [`codegen_tests!`] macro provides a declarative way to define tests
+//! that run across all available backends. Each test case is defined once
+//! and automatically expanded to run against each backend.
+//!
+//! ```ignore
+//! codegen_tests! {
+//!     backends: [cranelift, llvm],
+//!     tests: {
+//!         test_const_42: create_const_function(42) => sig_void_to_i64(),
+//!         test_add: create_add_function() => sig_i64_i64_to_i64(),
+//!     }
+//! }
+//! ```
+//!
+//! # FileCheck-style Verification (Planned)
+//!
+//! Future versions will support FileCheck-style assertions:
+//! ```ignore
+//! // CHECK: iadd
+//! // CHECK-NOT: imul
+//! ```
 
 use crate::{CodegenBackend, CodegenConfig, FunctionSignature, TypeDesc};
 use zir::idx::Idx;
@@ -297,4 +321,258 @@ where
     }
 
     results
+}
+
+// ============================================================================
+// Backend-Agnostic Test Infrastructure
+// ============================================================================
+
+/// Trait for types that can provide a codegen backend for testing.
+///
+/// Implement this trait for each backend to enable unified testing.
+/// The trait provides a factory method that creates backend instances.
+///
+/// # Example
+///
+/// ```ignore
+/// struct CraneliftTestBackend;
+///
+/// impl TestBackendProvider for CraneliftTestBackend {
+///     fn name() -> &'static str { "cranelift" }
+///     fn create(config: CodegenConfig) -> Box<dyn CodegenBackend> {
+///         Box::new(CraneliftBackend::new(config))
+///     }
+/// }
+/// ```
+pub trait TestBackendProvider {
+    /// Returns the name of this backend (e.g., "cranelift", "llvm").
+    fn name() -> &'static str;
+
+    /// Creates a new backend instance with the given configuration.
+    fn create(config: CodegenConfig) -> Box<dyn CodegenBackend>;
+
+    /// Returns whether this backend is available on the current platform.
+    ///
+    /// Override this to conditionally skip tests on unsupported platforms.
+    fn is_available() -> bool {
+        true
+    }
+}
+
+/// Runs a test case against a specific backend provider.
+///
+/// This is the core function used by the test macros to execute tests.
+pub fn run_test_with_backend<B: TestBackendProvider>(test_case: &CodegenTestCase<'_>) -> String {
+    if !B::is_available() {
+        panic!("Backend '{}' is not available on this platform", B::name());
+    }
+    let mut backend = B::create(CodegenConfig::default());
+    test_case.run(backend.as_mut())
+}
+
+/// Macro for declaring codegen tests that run across multiple backends.
+///
+/// This macro generates individual test functions for each combination of
+/// test case and backend. The tests are named `{test_name}_{backend_name}`.
+///
+/// # Usage
+///
+/// ```ignore
+/// use zir_codegen::declare_codegen_tests;
+///
+/// // First, define your backend providers
+/// struct Cranelift;
+/// impl TestBackendProvider for Cranelift {
+///     fn name() -> &'static str { "cranelift" }
+///     fn create(config: CodegenConfig) -> Box<dyn CodegenBackend> {
+///         zir_codegen_cranelift::create_backend(config)
+///     }
+/// }
+///
+/// // Then declare the tests
+/// declare_codegen_tests! {
+///     #[backend(Cranelift)]
+///     mod codegen_tests {
+///         test_const_42 => |arena| {
+///             (create_const_function(arena, 42), sig_void_to_i64())
+///         };
+///         test_add => |arena| {
+///             (create_add_function(arena), sig_i64_i64_to_i64())
+///         };
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! declare_codegen_tests {
+    (
+        #[backend($backend:ty)]
+        mod $mod_name:ident {
+            $(
+                $test_name:ident => |$arena:ident| $body:expr
+            );* $(;)?
+        }
+    ) => {
+        mod $mod_name {
+            use super::*;
+            use $crate::testing::*;
+            use zir::Arena;
+
+            $(
+                #[test]
+                fn $test_name() {
+                    let $arena = Arena::new();
+                    let (body, sig) = $body;
+                    let test_case = CodegenTestCase::new(
+                        stringify!($test_name),
+                        body,
+                        sig,
+                    );
+                    let ir = run_test_with_backend::<$backend>(&test_case);
+                    assert!(!ir.is_empty(), "Generated IR should not be empty");
+                }
+            )*
+        }
+    };
+}
+
+/// Macro for declaring snapshot tests across backends.
+///
+/// Similar to [`declare_codegen_tests!`] but uses insta for snapshot testing.
+/// Each test produces a snapshot file named `{test_name}_{backend_name}.snap`.
+#[macro_export]
+macro_rules! declare_codegen_snapshot_tests {
+    (
+        #[backend($backend:ty)]
+        mod $mod_name:ident {
+            $(
+                $test_name:ident => |$arena:ident| $body:expr
+            );* $(;)?
+        }
+    ) => {
+        mod $mod_name {
+            use super::*;
+            use $crate::testing::*;
+            use zir::Arena;
+
+            $(
+                #[test]
+                fn $test_name() {
+                    let $arena = Arena::new();
+                    let (body, sig) = $body;
+                    let test_case = CodegenTestCase::new(
+                        stringify!($test_name),
+                        body,
+                        sig,
+                    );
+                    let ir = run_test_with_backend::<$backend>(&test_case);
+                    insta::assert_snapshot!(ir);
+                }
+            )*
+        }
+    };
+}
+
+// ============================================================================
+// FileCheck-style IR Verification (Experimental)
+// ============================================================================
+
+/// A simple pattern matcher for IR verification.
+///
+/// Provides basic CHECK directive support similar to LLVM's FileCheck tool.
+/// This is useful for verifying that specific patterns appear in generated IR.
+///
+/// # Supported Directives
+///
+/// - `CHECK: pattern` - Verifies pattern appears in the output
+/// - `CHECK-NOT: pattern` - Verifies pattern does NOT appear
+/// - `CHECK-NEXT: pattern` - Verifies pattern appears on the next line
+///
+/// # Example
+///
+/// ```ignore
+/// let ir = backend.compile_to_ir(&body, sig);
+/// let checker = IrChecker::new(&ir);
+/// checker
+///     .check("iadd")
+///     .check_not("imul")
+///     .verify();
+/// ```
+pub struct IrChecker<'a> {
+    ir: &'a str,
+    lines: Vec<&'a str>,
+    current_line: usize,
+    errors: Vec<String>,
+}
+
+impl<'a> IrChecker<'a> {
+    /// Creates a new IR checker for the given IR text.
+    pub fn new(ir: &'a str) -> Self {
+        let lines: Vec<&str> = ir.lines().collect();
+        Self { ir, lines, current_line: 0, errors: Vec::new() }
+    }
+
+    /// Verifies that the pattern appears somewhere in the remaining IR.
+    ///
+    /// Advances the current position to after the matched line.
+    pub fn check(mut self, pattern: &str) -> Self {
+        let found = self.lines[self.current_line..].iter().position(|line| line.contains(pattern));
+
+        match found {
+            Some(offset) => {
+                self.current_line += offset + 1;
+            }
+            None => {
+                self.errors.push(format!(
+                    "CHECK: pattern '{}' not found after line {}",
+                    pattern, self.current_line
+                ));
+            }
+        }
+        self
+    }
+
+    /// Verifies that the pattern does NOT appear anywhere in the IR.
+    pub fn check_not(mut self, pattern: &str) -> Self {
+        if self.ir.contains(pattern) {
+            self.errors
+                .push(format!("CHECK-NOT: pattern '{}' was found but shouldn't be", pattern));
+        }
+        self
+    }
+
+    /// Verifies that the pattern appears on the very next line.
+    pub fn check_next(mut self, pattern: &str) -> Self {
+        if self.current_line >= self.lines.len() {
+            self.errors.push(format!("CHECK-NEXT: no more lines, expected '{}'", pattern));
+        } else if !self.lines[self.current_line].contains(pattern) {
+            self.errors.push(format!(
+                "CHECK-NEXT: line {} doesn't contain '{}', got: '{}'",
+                self.current_line, pattern, self.lines[self.current_line]
+            ));
+        } else {
+            self.current_line += 1;
+        }
+        self
+    }
+
+    /// Finalizes the check and panics if any errors occurred.
+    pub fn verify(self) {
+        if !self.errors.is_empty() {
+            panic!(
+                "IR verification failed:\n{}\n\nActual IR:\n{}",
+                self.errors.join("\n"),
+                self.ir
+            );
+        }
+    }
+
+    /// Returns whether all checks passed without panicking.
+    pub fn is_ok(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    /// Returns the collected errors.
+    pub fn errors(&self) -> &[String] {
+        &self.errors
+    }
 }

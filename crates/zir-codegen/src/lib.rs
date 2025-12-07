@@ -6,6 +6,15 @@
 //!
 //! The design is inspired by rustc's `rustc_codegen_ssa` crate, which provides
 //! backend-agnostic functions that depend on traits implemented by each backend.
+//!
+//! # Testing Infrastructure
+//!
+//! The [`testing`] module provides utilities for testing backends in a
+//! uniform way. Use the [`declare_codegen_tests!`] and [`declare_codegen_snapshot_tests!`]
+//! macros to declare tests that run across all backends.
+//!
+//! The [`testing::IrChecker`] type provides FileCheck-style verification
+//! for generated IR, useful for asserting specific patterns appear in output.
 
 pub mod testing;
 
@@ -437,6 +446,10 @@ pub trait CodegenBackend: Any {
 }
 
 /// Factory function type for creating backends.
+///
+/// This type is primarily used for testing infrastructure.
+/// For production code, prefer constructing backends directly.
+#[doc(hidden)]
 pub type BackendFactory = fn(CodegenConfig) -> Box<dyn CodegenBackend>;
 
 #[cfg(test)]

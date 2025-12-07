@@ -250,9 +250,31 @@ pub fn pointer_type(isa: &dyn TargetIsa) -> types::Type {
 
 /// Creates a Cranelift backend as a boxed trait object.
 ///
-/// This is the factory function for creating Cranelift backends in a
-/// backend-agnostic way. It returns a `Box<dyn CodegenBackend>` which
-/// can be used with the testing utilities in `zir_codegen::testing`.
+/// This factory function is primarily intended for testing with the
+/// backend-agnostic utilities in `zir_codegen::testing`. For direct
+/// use, prefer constructing [`CraneliftBackend`] directly via
+/// [`CraneliftBackend::new()`].
+///
+/// # Example
+///
+/// ```ignore
+/// use zir_codegen::CodegenConfig;
+/// use zir_codegen_cranelift::create_backend;
+///
+/// // For testing infrastructure
+/// let backend = create_backend(CodegenConfig::default());
+/// ```
+///
+/// For most use cases, use the backend directly:
+///
+/// ```ignore
+/// use zir_codegen::CodegenConfig;
+/// use zir_codegen_cranelift::CraneliftBackend;
+///
+/// // Direct construction (preferred for non-testing code)
+/// let backend = CraneliftBackend::new(CodegenConfig::default());
+/// ```
+#[doc(hidden)]
 pub fn create_backend(config: CodegenConfig) -> Box<dyn CodegenBackend> {
     Box::new(CraneliftBackend::new(config))
 }

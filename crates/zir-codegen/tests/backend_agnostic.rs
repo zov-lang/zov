@@ -145,3 +145,105 @@ fn test_backend_config_independence() {
     assert!(!backend1.config().debug_info);
     assert!(backend2.config().debug_info);
 }
+
+// ============================================================================
+// IrChecker Tests
+// ============================================================================
+
+use zir_codegen::testing::IrChecker;
+
+/// Test IrChecker basic CHECK directive.
+#[test]
+fn test_ir_checker_check() {
+    let ir = "function add(i64, i64) -> i64 {\nblock0:\n  v0 = iadd v1, v2\n  return v0\n}";
+    let checker = IrChecker::new(ir);
+    checker.check("iadd").check("return").verify();
+}
+
+/// Test IrChecker CHECK-NOT directive.
+#[test]
+fn test_ir_checker_check_not() {
+    let ir = "function add(i64, i64) -> i64 {\nblock0:\n  v0 = iadd v1, v2\n  return v0\n}";
+    let checker = IrChecker::new(ir);
+    checker.check_not("imul").check_not("isub").verify();
+}
+
+/// Test IrChecker CHECK-NEXT directive.
+#[test]
+fn test_ir_checker_check_next() {
+    let ir = "line1: first\nline2: second\nline3: third";
+    let checker = IrChecker::new(ir);
+    checker.check("first").check_next("second").check_next("third").verify();
+}
+
+/// Test IrChecker with actual generated IR.
+#[test]
+fn test_ir_checker_with_cranelift_ir() {
+    let arena = Arena::new();
+    let body = create_add_function(&arena);
+
+    let mut backend = create_backend(CodegenConfig::default());
+    let ir = compile_to_ir_text(backend.as_mut(), &body, sig_i64_i64_to_i64());
+
+    // Verify the IR contains expected Cranelift patterns
+    IrChecker::new(&ir)
+        .check("function")
+        .check("i64")
+        .check("iadd")
+        .check("return")
+        .check_not("imul")
+        .verify();
+}
+
+/// Test IrChecker error reporting.
+#[test]
+fn test_ir_checker_errors() {
+    let ir = "function foo() {}";
+    let checker = IrChecker::new(ir).check("nonexistent");
+    assert!(!checker.is_ok());
+    assert!(!checker.errors().is_empty());
+}
+
+// ============================================================================
+// TestBackendProvider Tests
+// ============================================================================
+
+use zir_codegen::CodegenBackend;
+use zir_codegen::testing::TestBackendProvider;
+
+/// Define Cranelift as a test backend provider.
+struct CraneliftProvider;
+
+impl TestBackendProvider for CraneliftProvider {
+    fn name() -> &'static str {
+        "cranelift"
+    }
+
+    fn create(config: CodegenConfig) -> Box<dyn CodegenBackend> {
+        create_backend(config)
+    }
+}
+
+/// Test TestBackendProvider trait with Cranelift.
+#[test]
+fn test_backend_provider_trait() {
+    assert_eq!(CraneliftProvider::name(), "cranelift");
+    assert!(CraneliftProvider::is_available());
+
+    let backend = CraneliftProvider::create(CodegenConfig::default());
+    assert_eq!(backend.name(), "cranelift");
+}
+
+/// Test running tests via the TestBackendProvider trait.
+#[test]
+fn test_run_with_backend_provider() {
+    use zir_codegen::testing::run_test_with_backend;
+
+    let arena = Arena::new();
+    let test_case =
+        CodegenTestCase::new("provider_test", create_const_function(&arena, 99), sig_void_to_i64());
+
+    let ir = run_test_with_backend::<CraneliftProvider>(&test_case);
+    assert!(!ir.is_empty());
+    assert!(ir.contains("function"));
+}

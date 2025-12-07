@@ -1,0 +1,33 @@
+[package]
+name = "zir-codegen-llvm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LLVM code generation backend for ZIR"
+
+[dependencies]
+zir = { path = "../zir" }
+zir-codegen = { path = "../zir-codegen" }
+
+# LLVM bindings - using llvm-sys for FFI
+# NOTE: This requires LLVM to be installed on the system
+# The llvm-sys crate will link against the system LLVM installation.
+# Version compatibility:
+# - llvm-sys 180 = LLVM 18.x
+# - llvm-sys 170 = LLVM 17.x
+# Using 180 as it's the latest stable release
+llvm-sys = { version = "180", optional = true }
+
+# Re-exports from workspace
+index_vec = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+
+[features]
+# Enable LLVM backend (requires system LLVM installation)
+# By default, this crate is a stub that panics when used.
+# Enable the "llvm" feature to use the actual LLVM backend.
+default = []
+llvm = ["dep:llvm-sys"]

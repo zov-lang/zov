@@ -4,6 +4,7 @@ members = [
     "crates/zir",
     "crates/zir-codegen",
     "crates/zir-codegen-cranelift",
+    "crates/zir-codegen-llvm",
 ]
 
 [workspace.package]
