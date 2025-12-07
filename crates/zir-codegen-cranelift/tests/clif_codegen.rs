@@ -6,8 +6,8 @@
 
 use zir::{Arena, mir};
 use zir_codegen::testing::{
-    compile_to_ir_text, create_add_function, create_const_function, create_max_function,
-    run_standard_tests, sig_i64_i64_to_i64, sig_void_to_i64, IrChecker,
+    IrChecker, compile_to_ir_text, create_add_function, create_const_function, create_max_function,
+    run_standard_tests, sig_i64_i64_to_i64, sig_void_to_i64,
 };
 use zir_codegen::{CodegenConfig, FunctionSignature};
 use zir_codegen_cranelift::create_backend;
@@ -44,7 +44,7 @@ fn test_clif_const_42() {
     // Platform-independent verification using IrChecker
     IrChecker::new(&clif)
         .check("function")
-        .check("42")  // The constant value
+        .check("42") // The constant value
         .check("return")
         .verify();
 
@@ -61,7 +61,7 @@ fn test_clif_const_negative() {
     // Platform-independent verification
     IrChecker::new(&clif)
         .check("function")
-        .check("-123")  // The constant value
+        .check("-123") // The constant value
         .check("return")
         .verify();
 
@@ -77,7 +77,7 @@ fn test_clif_add_function() {
     // Platform-independent verification
     IrChecker::new(&clif)
         .check("function")
-        .check("iadd")  // The add instruction
+        .check("iadd") // The add instruction
         .check("return")
         .verify();
 
@@ -93,7 +93,7 @@ fn test_clif_max_function() {
     // Platform-independent verification
     IrChecker::new(&clif)
         .check("function")
-        .check("icmp")  // Comparison for branching
+        .check("icmp") // Comparison for branching
         .check("return")
         .verify();
 
